@@ -34,7 +34,7 @@ class TLDServer:
         }
         self.ttl = 3600  # Default TTL for records
 
-    def handle_query(self, query):
+    def handle_tld_query(self, query):
         """
         Handles DNS queries by referring them to the correct authoritative server.
         """

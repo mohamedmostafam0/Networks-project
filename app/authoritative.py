@@ -150,18 +150,28 @@ class AuthoritativeServer:
         question = query[12:]  # Include the original question section
         return header + question
 
-    def parse_domain_name(self, query):
-        """
-        Extracts the domain name from the DNS query.
-        """
+def parse_domain_name(self, query):
+    """
+    Extracts the domain name from the DNS query.
+    """
+    try:
         domain_name = ""
-        length = query[12]
-        i = 13
+        i = 12  # Start after the header
+        length = query[i]  # First length byte
+
         while length != 0:
-            domain_name += query[i:i + length].decode() + "."
-            i += length
-            length = query[i]
-        return domain_name[:-1]  # Remove the trailing dot
+            if i + length + 1 > len(query):  # Ensure bounds
+                raise ValueError("Query length exceeds the buffer size while parsing the domain name.")
+
+            domain_name += query[i + 1: i + 1 + length].decode() + "."
+            i += length + 1
+            length = query[i]  # Get the next length byte
+
+        return domain_name[:-1]  # Remove trailing dot
+    except (IndexError, ValueError) as e:
+        logging.error(f"Failed to parse domain name from query: {e}")
+        return None  # Return None or raise an exception depending on your use case
+
 
     def parse_query_type(self, query):
         """

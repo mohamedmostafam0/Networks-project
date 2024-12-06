@@ -109,7 +109,7 @@ def parse_dns_query(query):
     qclass = struct.unpack("!H", query[idx + 2:idx + 4])[0]
     
     # Debugging output to check what values are being parsed
-    logging.debug(f"Transaction ID: {transaction_id}, Domain: {domain_name}, QTYPE: {qtype}, QCLASS: {qclass}")
+    # logging.debug(f"Transaction ID: {transaction_id}, Domain: {domain_name}, QTYPE: {qtype}, QCLASS: {qclass}")
 
     # If QCLASS is not valid, raise an error
     if qclass != 1:  # Only support IN class (1)
@@ -174,9 +174,32 @@ def build_error_response(transaction_id, query, rcode):
 
 def extract_referred_ip(response):
     """
-    Extracts the referred IP address from a DNS response (Authority or Additional section).
+    Extracts the referred IP address from a DNS response (Additional section).
     """
-    # Simplified example: assumes the referral IP is in the RDATA of the first record
-    referral_start = response.find(b'\xc0')  # Pointer to name in the additional section
-    ip_bytes = response[referral_start + 12: referral_start + 16]  # Extract RDATA
-    return bytes_to_ip(ip_bytes)
+    # Locate the additional section (last part of the response)
+    try:
+        # Find the start of the additional section (example assumes one Authority and one Additional record)
+        # Skip the header (12 bytes) + Question (domain name + 4 bytes for QTYPE/QCLASS) + Authority section
+        question_end = response.find(b'\x00\x01\x00\x01') + 4  # End of Question
+        additional_section = response[question_end:]
+
+        # Locate the RDATA for the additional record
+        rdata_offset = additional_section.rfind(b'\x00\x04')  # Look for A record with RDLENGTH of 4 bytes
+        if rdata_offset == -1:
+            raise ValueError("RDATA for A record not found in the additional section")
+
+        # Extract the 4-byte IP address
+        ip_bytes = additional_section[rdata_offset + 2: rdata_offset + 6]  # Skip the RDLENGTH
+        if len(ip_bytes) != 4:
+            raise ValueError(f"Invalid IP bytes length: {len(ip_bytes)} (expected 4)")
+
+        return bytes_to_ip(ip_bytes)
+    except Exception as e:
+        raise ValueError(f"Failed to extract referred IP: {e}")
+
+def bytes_to_ip(ip_bytes):
+    """
+    Converts 4 bytes into a dotted-quad IPv4 address (e.g., "192.168.1.1").
+    """
+    return socket.inet_ntoa(ip_bytes)
+

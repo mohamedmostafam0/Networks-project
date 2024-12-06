@@ -29,18 +29,15 @@ class RootServer:
         }
 
 
-    def handle_query(self, query):
+    def handle_root_query(self, query):
         """
         Handles DNS queries by referring them to the correct TLD server.
         """
         domain_name = self.extract_domain_name(query)
         tld = self.get_tld(domain_name)
-        print(domain_name)
-        print(tld)
         if tld in self.tld_mapping:
             tld_server_address = self.tld_mapping[tld]
             logging.info(f"Referring query for {domain_name} to TLD server at {tld_server_address}")
-            print(f"Referring query for {domain_name} to TLD server at {tld_server_address}")
             return self.build_referral_response(query, tld_server_address)
         
         logging.error(f"TLD {tld} not found in root server mapping.")

@@ -11,6 +11,7 @@ from tcp_transport import TCPTransport
 from queue import Queue
 from utils import build_dns_query
 import random
+import time
 
 # Setup logging
 logging.basicConfig(level=logging.DEBUG)
@@ -87,8 +88,11 @@ def start_dns_server():
 def main():
     logging.info("Starting the DNS Server Agent...")
 
-    cache, authoritative_server, root_server, tld_server, udp_transport, tcp_transport, udp_thread, tcp_thread = start_dns_server()
-
+    cache, authoritative_server, tld_server, root_server, udp_transport, tcp_transport, udp_thread, tcp_thread = start_dns_server()
+    # print(f"root_server is of type: {type(root_server)}")
+    # print(f"root_server is of type: {type(tld_server)}")
+    # print(f"root_server is of type: {type(authoritative_server)}")
+    
     if cache is None or authoritative_server is None:
         logging.error("Failed to start DNS server.")
     else:

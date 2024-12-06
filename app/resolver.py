@@ -4,7 +4,7 @@ from cache import Cache
 from udp_transport import UDPTransport
 from authoritative import AuthoritativeServer
 from root import RootServer
-from tld import TLDServer
+from tld import TLDServer 
 from utils import (
     build_dns_header,
     build_dns_question,
@@ -26,12 +26,10 @@ def resolve_query(query, cache: Cache, root_server: RootServer, tld_server: TLDS
     """
     Resolves a DNS query by checking the cache and querying the Root, TLD, and Authoritative servers in sequence.
     """
-    logging.debug("Entered resolve query")
     
     # Validate the query format
     try:
         transaction_id, domain_name, qtype, qclass = validate_query(query)
-        logging.info(f"Validated query for domain: {domain_name}, type: {qtype}")
     except ValueError as e:
         logging.error(f"Invalid query: {e}")
         return build_error_response(query, rcode=1)  # Format error (RCODE 1)
@@ -45,22 +43,24 @@ def resolve_query(query, cache: Cache, root_server: RootServer, tld_server: TLDS
     logging.info(f"Cache miss for domain: {domain_name}. Querying root server.")
 
     # Query Root Server
-    root_response = root_server.handle_query(query)
+    root_response = root_server.handle_root_query(query)
     if not root_response:
         logging.error(f"Root server could not resolve domain: {domain_name}")
         return build_error_response(query, rcode=3)  # NXDOMAIN
 
     # Query TLD Server
     tld_server_ip = extract_referred_ip(root_response)
-    # tld_response = tld_server.handle_query(query, tld_server_ip)
-    tld_response = tld_server.handle_query(query)
+    logging.debug(f"Referred TLD server IP: {tld_server_ip}")
+
+    tld_response = tld_server.handle_tld_query(query)
     if not tld_response:
         logging.error(f"TLD server could not resolve domain: {domain_name}")
         return build_error_response(query, rcode=3)  # NXDOMAIN
 
+
     # Query Authoritative Server
     authoritative_server_ip = extract_referred_ip(tld_response)
-    # authoritative_response = authoritative_server.handle_query(query, authoritative_server_ip)
+    logging.debug(f"Referred authoritative server IP: {authoritative_server_ip}")
     authoritative_response = authoritative_server.handle_query(query)
     if not authoritative_response:
         logging.error(f"Authoritative server could not resolve domain: {domain_name}")
@@ -77,7 +77,6 @@ def resolve_query(query, cache: Cache, root_server: RootServer, tld_server: TLDS
     authoritative_server_ip = extract_referred_ip(tld_response)
     # authoritative_response = authoritative_server.handle_query(query, authoritative_server_ip)
     authoritative_response = authoritative_server.handle_query(query)
-    print("dakhal fel authoritative")
     if not authoritative_response:
         logging.error(f"Authoritative server could not resolve {domain_name}")
         return build_error_response(query, rcode=3)  # NXDOMAIN
