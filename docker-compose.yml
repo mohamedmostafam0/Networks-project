@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  redis:
+    image: "redis:latest"
+    container_name: "redis-server"
+    ports:
+      - "6379:6379"
+    restart: always
+
+  python-dns:
+    build: .
+    container_name: "python-dns-resolver"
+    ports:
+      - "1053:1053"
+    environment:
+      - REDIS_HOST=redis
+    depends_on:
+      - redis
+    restart: always
