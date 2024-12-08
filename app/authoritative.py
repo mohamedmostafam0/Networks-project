@@ -63,37 +63,36 @@ class AuthoritativeServer:
             },
         }
 
-    def handle_query(self, query):
+
+    def handle_name_query(self, query):
         """
         Handles the DNS query by checking the cache first and then looking up the record for the domain.
         Returns a DNS response if found or None if not found.
         """
-        # First check the cache
         cached_response = self.cache.get(query)
         if cached_response:
             logging.info("Cache hit")
-            return cached_response  # Return cached response if available
+            return cached_response
 
-        # If cache miss, handle the query normally
         domain_name = self.parse_domain_name(query)
+        if not domain_name:
+            return self.build_error_response(query, rcode=3)  # Invalid domain name
+
         query_type = self.parse_query_type(query)
 
         logging.debug(f"Handling query for domain {domain_name}, type {query_type}")
 
-        # Check if the domain exists in the authoritative server's records
         if domain_name in self.records:
-            # Check if the queried type exists for the domain
             if query_type in self.records[domain_name]:
                 response = self.build_response(domain_name, query_type)
-                # Store the response in cache before returning
                 self.cache.store(query, response)
                 return response
             else:
                 logging.error(f"Query type {query_type} not found for {domain_name}")
-                return self.build_error_response(query, rcode=4)  # RCODE 4: Not Implemented
+                return self.build_error_response(query, rcode=4)
         else:
             logging.error(f"Domain {domain_name} not found in authoritative records")
-            return self.build_error_response(query, rcode=3)  # RCODE 3: NXDOMAIN (Non-Existent Domain)
+            return self.build_error_response(query, rcode=3)
 
     def build_response(self, domain_name, query_type):
         """
@@ -150,34 +149,48 @@ class AuthoritativeServer:
         question = query[12:]  # Include the original question section
         return header + question
 
-def parse_domain_name(self, query):
-    """
-    Extracts the domain name from the DNS query.
-    """
-    try:
-        domain_name = ""
-        i = 12  # Start after the header
-        length = query[i]  # First length byte
 
-        while length != 0:
-            if i + length + 1 > len(query):  # Ensure bounds
-                raise ValueError("Query length exceeds the buffer size while parsing the domain name.")
+    def parse_domain_name(self, query):
+        """
+        Extracts the domain name from the DNS query.
+        """
+        try:
+            domain_name = ""
+            i = 12  # Start after the header
+            length = query[i]  # First length byte
 
-            domain_name += query[i + 1: i + 1 + length].decode() + "."
-            i += length + 1
-            length = query[i]  # Get the next length byte
+            while length != 0:
+                if i + length + 1 > len(query):  # Ensure bounds
+                    raise ValueError("Query length exceeds the buffer size while parsing the domain name.")
 
-        return domain_name[:-1]  # Remove trailing dot
-    except (IndexError, ValueError) as e:
-        logging.error(f"Failed to parse domain name from query: {e}")
-        return None  # Return None or raise an exception depending on your use case
+                domain_name += query[i + 1: i + 1 + length].decode() + "."
+                i += length + 1
+                length = query[i]  # Get the next length byte
 
+            return domain_name[:-1]  # Remove trailing dot
+        except (IndexError, ValueError) as e:
+            logging.error(f"Failed to parse domain name from query: {e}")
+            return None
 
     def parse_query_type(self, query):
         """
-        Extracts the query type from the DNS query (e.g., A, MX, NS, etc.).
+        Extracts the query type from the DNS query (e.g., 1 for A, 2 for NS, etc.) and maps it to its string equivalent.
         """
-        return struct.unpack("!H", query[-4:-2])[0]
+        # Map of numeric query types to their string representations
+        query_type_map = {
+            1: "A",     # Host Address
+            2: "NS",    # Name Server
+            5: "CNAME", # Canonical Name
+            15: "MX",   # Mail Exchange
+            33: "PTR",  # Pointer
+            6: "SOA",   # Start of Authority
+        }
+
+        query_type_num = struct.unpack("!H", query[-4:-2])[0]  # Get the query type number from the query
+
+        # Return the mapped query type, or None if the type is unknown
+        return query_type_map.get(query_type_num, None)
+
 
     def build_dns_header(self, transaction_id, flags, qd_count, an_count, ns_count, ar_count):
         """
@@ -185,10 +198,33 @@ def parse_domain_name(self, query):
         """
         return struct.pack("!HHHHHH", transaction_id, flags, qd_count, an_count, ns_count, ar_count)
 
+    def query_type_to_int(self, query_type):
+        """
+        Convert a query type string (e.g., 'A', 'NS', 'MX') to the corresponding integer.
+        """
+        query_type_map = {
+            "A": 1,     # Host Address
+            "NS": 2,    # Name Server
+            "CNAME": 5, # Canonical Name
+            "MX": 15,   # Mail Exchange
+            "AAAA": 28, # IPv6 Address
+            "PTR": 12,  # Pointer
+            "SOA": 6,   # Start of Authority
+        }
+
+        return query_type_map.get(query_type, None)
+
     def build_question_section(self, domain_name, query_type):
         """
         Builds the DNS question section for the query.
+        Converts the query type string to an integer and builds the section.
         """
+        # If query_type is a string, convert it to integer
+        if isinstance(query_type, str):
+            query_type = self.query_type_to_int(query_type)
+            if query_type is None:
+                raise ValueError(f"Invalid query type: {query_type}")
+        
         qname = domain_name.encode() + b'\x00'  # Null-terminated domain name
         qtype = struct.pack("!H", query_type)  # Query type as 2-byte unsigned short
         qclass = struct.pack("!H", 1)  # IN class (1)

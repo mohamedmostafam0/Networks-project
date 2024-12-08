@@ -6,6 +6,7 @@ from authoritative import AuthoritativeServer
 from root import RootServer
 from tld import TLDServer 
 from utils import (
+    parse_dns_response,
     build_dns_header,
     build_dns_question,
     build_rr,
@@ -61,7 +62,8 @@ def resolve_query(query, cache: Cache, root_server: RootServer, tld_server: TLDS
     # Query Authoritative Server
     authoritative_server_ip = extract_referred_ip(tld_response)
     logging.debug(f"Referred authoritative server IP: {authoritative_server_ip}")
-    authoritative_response = authoritative_server.handle_query(query)
+    authoritative_response = authoritative_server.handle_name_query(query)
+    print("your name response is: ", authoritative_response)
     if not authoritative_response:
         logging.error(f"Authoritative server could not resolve domain: {domain_name}")
         return build_error_response(query, rcode=3)  # NXDOMAIN
@@ -69,20 +71,8 @@ def resolve_query(query, cache: Cache, root_server: RootServer, tld_server: TLDS
     # Cache the successful response
     logging.info(f"Caching response for domain: {domain_name}")
     cache.store(query, authoritative_response)
-
-    return authoritative_response
-
-
-    # Query Authoritative Server (extract referral IP)
-    authoritative_server_ip = extract_referred_ip(tld_response)
-    # authoritative_response = authoritative_server.handle_query(query, authoritative_server_ip)
-    authoritative_response = authoritative_server.handle_query(query)
-    if not authoritative_response:
-        logging.error(f"Authoritative server could not resolve {domain_name}")
-        return build_error_response(query, rcode=3)  # NXDOMAIN
-
-    # Cache the successful response
-    cache.store(query, authoritative_response)
+    human_readable = parse_dns_response(authoritative_response)
+    print("name server response is ", human_readable)
     return authoritative_response
 
 def build_error_response(query, rcode):

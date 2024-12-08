@@ -86,22 +86,6 @@ def parse_answer(data):
     record_data = data[10:10+data_length]
     return domain_name_offset, query_type, ttl, record_data
 
-def build_error_response(query, rcode):
-    """
-    Builds a DNS error response with the specified RCODE.
-    """
-    # Get transaction ID from query and set flags for error
-    transaction_id = struct.unpack("!H", query[:2])[0]
-    flags = 0x8180 | rcode  # Standard response, with the specified error RCODE
-    questions = 1
-    answer_rrs = 0
-    authority_rrs = 0
-    additional_rrs = 0
-
-    header = build_header(transaction_id, flags, questions, answer_rrs, authority_rrs, additional_rrs)
-    question_section = query[12:]  # Copy the question section from the original query
-
-    return header + question_section
 
 def encode_record(record, record_type):
     """
