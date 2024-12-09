@@ -265,7 +265,7 @@ def parse_answer_section(response, start_pos):
     i = start_pos
     domain_name_pointer = struct.unpack("!H", response[i:i+2])[0]
     i += 2
-    
+    print("domain name pointer is: ", domain_name_pointer)
     # Skip the pointer (if pointer is used, it's 0xC000 and points to the domain name in the question section)
     if domain_name_pointer >= 0xC000:
         domain_name = parse_domain_name(response, i)[0]  # Follow the pointer
@@ -289,15 +289,16 @@ def parse_domain_name(response, start_pos, visited_pointers=None):
     Parse a domain name from the response, handling labels and pointers.
     """
     domain_name = ""
-    i = start_pos
+    i = start_pos #12
     visited_pointers = visited_pointers or set()
-
+    print("response is ", len(response))
+    print("starting position is  ", start_pos)
     while True:
         if i >= len(response):
             raise IndexError("Index out of range while parsing domain name")
 
         length = response[i]
-        
+        print("length is ", length)
         # Handle pointers (compression)
         if length & 0xC0 == 0xC0:
             pointer = struct.unpack("!H", response[i:i+2])[0]
@@ -315,6 +316,7 @@ def parse_domain_name(response, start_pos, visited_pointers=None):
             i += 1
             break
         else:  # Regular label
+            print(f"Parsing domain name at offset {i}, current domain: {domain_name}")
             if i + length + 1 > len(response):
                 raise IndexError("Domain name length exceeds available data.")
             
