@@ -13,7 +13,7 @@ from utils import build_dns_query
 import random
 import time
 
-# Setup logging
+# Setup logginggg
 logging.basicConfig(level=logging.DEBUG)
 
 # DNS server configuration
