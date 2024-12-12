@@ -138,3 +138,23 @@ class RootServer:
         question = build_dns_question(domain_name, qtype, qclass)
 
         return header + question
+    
+    
+    def build_error_response(self, query, rcode):
+        """
+        Constructs a DNS response with an error (e.g., NXDOMAIN).
+        """
+        try:
+            transaction_id, _, _, _ = parse_dns_query(query)
+        except ValueError as e:
+            logging.error(f"Failed to parse query for error response: {e}")
+            return b""  # Return an empty response if query parsing fails
+
+        flags = 0x8180 | rcode  # Standard query response with the provided error code
+        qd_count = 1  # One question
+        an_count = 0  # No answer records
+        ns_count = 0  # No authority records
+        ar_count = 0  # No additional records
+        header = build_dns_header(transaction_id, flags, qd_count, an_count, ns_count, ar_count)
+        question = query[12:]  # Include the original question section
+        return header + question

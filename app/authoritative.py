@@ -94,46 +94,112 @@ class AuthoritativeServer:
             logging.error(f"Domain {domain_name} not found in authoritative records")
             return self.build_error_response(query, rcode=3)
 
+
     def build_response(self, domain_name, query_type):
         """
-        Builds the DNS response based on the queried domain name and type.
+        Builds the DNS response with detailed debugging.
         """
-        # The standard DNS header: ID, Flags, QDCOUNT, ANCOUNT, NSCOUNT, ARCOUNT
-        transaction_id = 1234  # Example transaction ID
-        flags = 0x8180  # Standard response, no error
-        questions = 1
-        answer_rrs = len(self.records[domain_name][query_type])
-        authority_rrs = 0
-        additional_rrs = 0
+        try:
+            # Header section
+            transaction_id = 1234
+            flags = 0x8180
+            questions = 1
+            answers = len(self.records[domain_name][query_type])
+            authority_rrs = 0
+            additional_rrs = 0
 
-        header = struct.pack("!HHHHHH", transaction_id, flags, questions, answer_rrs, authority_rrs, additional_rrs)
+            header = struct.pack("!HHHHHH", 
+                            transaction_id, 
+                            flags, 
+                            questions, 
+                            answers, 
+                            authority_rrs, 
+                            additional_rrs)
+            print(f"Debug - Header bytes: {header.hex()}")
 
-        # Build the question section (reuse the original query)
-        question_section = self.build_question_section(domain_name, query_type)
+            # Question section
+            question = b''
+            for label in domain_name.split('.'):
+                question += bytes([len(label)]) + label.encode('ascii')
+            question += b'\x00'  # Terminating byte
+            question += struct.pack("!HH", 1, 1)  # QTYPE=A(1), QCLASS=IN(1)
+            print(f"Debug - Question bytes: {question.hex()}")
 
-        # Build the answer section for the records
-        answer_section = b""
-        for record in self.records[domain_name][query_type]:
-            answer_section += self.build_record(record, query_type)
+            # Answer section
+            answer = b''
+            if query_type == "A" and domain_name in self.records:
+                for ip_address in self.records[domain_name][query_type]:
+                    print(f"Debug - Processing IP: {ip_address}")
+                    
+                    # Compression pointer
+                    pointer = struct.pack("!H", 0xC00C)
+                    answer += pointer
+                    print(f"Debug - Compression pointer bytes: {pointer.hex()}")
+                    
+                    # Type, Class, TTL, RDLength
+                    fixed_fields = struct.pack("!HHIH", 
+                                            1,      # TYPE: A
+                                            1,      # CLASS: IN
+                                            3600,   # TTL
+                                            4)      # RDLENGTH: 4 bytes
+                    answer += fixed_fields
+                    print(f"Debug - Fixed fields bytes: {fixed_fields.hex()}")
+                    
+                    # IP address bytes
+                    ip_parts = [int(part) for part in ip_address.split('.')]
+                    ip_bytes = bytes(ip_parts)
+                    answer += ip_bytes
+                    print(f"Debug - IP address bytes: {ip_bytes.hex()}")
 
-        # Return the full DNS response
-        return header + question_section + answer_section
+            print(f"Debug - Full answer bytes: {answer.hex()}")
+            response = header + question + answer
+            print(f"Debug - Full response bytes: {response.hex()}")
+            
+            return response
+
+        except Exception as e:
+            logging.error(f"Error in build_response: {str(e)}", exc_info=True)
+            return None
+
+    def pack_domain_name(self, domain):
+        """
+        Packs a domain name into DNS wire format.
+        """
+        result = b''
+        for label in domain.split('.'):
+            if label:  # Skip empty labels
+                length = len(label)
+                result += struct.pack('!B', length) + label.encode()
+        return result + b'\x00'  # Terminate with null byte
+
+
 
     def build_record(self, record, query_type):
         """
-        Builds a DNS record based on the query type (A, MX, NS, SOA, PTR).
+        Builds a DNS record with proper formatting.
         """
         if query_type == "A":
-            # For A records, return the IPv4 address as a byte string
-            ip_address = struct.unpack("!4B", bytes(map(int, record.split("."))))
-            return struct.pack("!HHIH4B", 0xC00C, 1, 1, 3600, *ip_address)
-        elif query_type == "NS" or query_type == "MX" or query_type == "PTR":
-            # For NS, MX, PTR (Return fully qualified domain name)
-            return struct.pack("!HHIH", 0xC00C, 1, 1, 3600, len(record), *record.encode())
-        elif query_type == "SOA":
-            # For SOA records, return the SOA data (Start of Authority)
-            return struct.pack("!HHIH", 0xC00C, 6, 1, 3600, len(record), *record.encode())
-        return b""  # Default to empty if no matching type found
+            # Properly format A record
+            ip_parts = [int(x) for x in record.split(".")]
+            return struct.pack("!HHIH4B", 0xC00C, 1, 1, 3600, *ip_parts)
+    
+
+
+    # def build_record(self, record, query_type):
+    #     """
+    #     Builds a DNS record based on the query type (A, MX, NS, SOA, PTR).
+    #     """
+    #     if query_type == "A":
+    #         # For A records, return the IPv4 address as a byte string
+    #         ip_address = struct.unpack("!4B", bytes(map(int, record.split("."))))
+    #         return struct.pack("!HHIH4B", 0xC00C, 1, 1, 3600, *ip_address)
+    #     elif query_type == "NS" or query_type == "MX" or query_type == "PTR":
+    #         # For NS, MX, PTR (Return fully qualified domain name)
+    #         return struct.pack("!HHIH", 0xC00C, 1, 1, 3600, len(record), *record.encode())
+    #     elif query_type == "SOA":
+    #         # For SOA records, return the SOA data (Start of Authority)
+    #         return struct.pack("!HHIH", 0xC00C, 6, 1, 3600, len(record), *record.encode())
+    #     return b""  # Default to empty if no matching type found
 
     def build_error_response(self, query, rcode):
         """
@@ -198,19 +264,19 @@ class AuthoritativeServer:
         """
         return struct.pack("!HHHHHH", transaction_id, flags, qd_count, an_count, ns_count, ar_count)
 
-    def query_type_to_int(self, query_type):
+    def query_type_to_int(self, qtype):
         """
-        Convert a query type string (e.g., 'A', 'NS', 'MX') to the corresponding integer.
+        Convert query type string to number.
         """
-        query_type_map = {
-            "A": 1,     # Host Address
-            "NS": 2,    # Name Server
-            "CNAME": 5, # Canonical Name
-            "MX": 15,   # Mail Exchange
-            "AAAA": 28, # IPv6 Address
-            "PTR": 12,  # Pointer
-            "SOA": 6,   # Start of Authority
+        type_map = {
+            'A': 1,
+            'NS': 2,
+            'CNAME': 5,
+            'SOA': 6,
+            'PTR': 12,
+            'MX': 15
         }
+        return type_map.get(qtype, 1)  # Default to A record type
 
         return query_type_map.get(query_type, None)
 

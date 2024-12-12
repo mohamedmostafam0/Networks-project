@@ -75,7 +75,7 @@ def resolve_query(query, cache: Cache, root_server: RootServer, tld_server: TLDS
     cache.store(query, authoritative_response)
     human_readable = parse_dns_response(authoritative_response)
     print("name server response is ", human_readable)
-    return authoritative_response
+    return human_readable
 
 def build_error_response(query, rcode):
     """

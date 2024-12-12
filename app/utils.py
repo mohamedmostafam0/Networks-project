@@ -296,132 +296,190 @@ def bytes_to_ip(ip_bytes):
 
 def parse_dns_response(response):
     """
-    Parse a DNS response and return a human-readable format.
+    Parse DNS response with enhanced error handling.
     """
-    # Start by unpacking the DNS header (first 12 bytes)
-    header = struct.unpack("!HHHHHH", response[:12])
-    
-    transaction_id = header[0]
-    flags = header[1]
-    question_count = header[2]
-    answer_count = header[3]
-    
-    # Initialize the response
-    human_readable = []
-    
-    # Append the transaction ID and flags in human-readable format
-    human_readable.append(f"Transaction ID: {transaction_id}")
-    human_readable.append(f"Flags: {hex(flags)}")
-    print("human readable is: ", human_readable)
-    # Process the question section
-    current_position = 12
-    questions = []
-    
-    for _ in range(question_count):
-        domain_name, qtype, qclass, current_position = parse_question_section(response, current_position)
-        questions.append(f"Question: {domain_name}, Type: {qtype}, Class: {qclass}")
-    human_readable.append("\n".join(questions))
-    print(human_readable)
-    # Process the answer section
-    answers = []
-    for _ in range(answer_count):
-        record, current_position = parse_answer_section(response, current_position)
-        answers.append(record)
-    
-    human_readable.append("\n".join(answers))
-    
-    return "\n".join(human_readable)
-
+    try:
+        if len(response) < 12:
+            raise ValueError("Response too short for DNS header")
+        
+        # Parse header
+        header = struct.unpack("!HHHHHH", response[:12])
+        transaction_id, flags, qdcount, ancount, nscount, arcount = header
+        
+        current_pos = 12
+        questions = []
+        answers = []
+        
+        # Parse question section
+        for _ in range(qdcount):
+            qname, qtype, qclass, new_pos = parse_question_section(response, current_pos)
+            if qname:
+                questions.append(f"{qname} TYPE{qtype} CLASS{qclass}")
+            current_pos = new_pos
+        
+        # Parse answer section
+        for _ in range(ancount):
+            answer, new_pos = parse_answer_section(response, current_pos)
+            if answer:
+                answers.append(answer)
+            current_pos = new_pos
+        
+        return {
+            'transaction_id': transaction_id,
+            'flags': hex(flags),
+            'questions': questions,
+            'answers': answers
+        }
+        
+    except Exception as e:
+        logging.error(f"Error parsing DNS response: {str(e)}")
+        return {
+            'transaction_id': transaction_id if 'transaction_id' in locals() else None,
+            'flags': hex(flags) if 'flags' in locals() else None,
+            'questions': questions if 'questions' in locals() else [],
+            'answers': answers if 'answers' in locals() else []
+        }
 
 def parse_question_section(response, start_pos):
     """
     Parse a DNS question section and return the domain name and query type/class.
     """
     # The domain name in a question section is encoded as labels (length byte + label)
-    domain_name, i = parse_domain_name(response, start_pos)
+    domain_name, i = parse_dns_name(response, start_pos)
     qtype, qclass = struct.unpack("!HH", response[i:i+4])
     return domain_name, qtype, qclass, i + 4
 
 
 
-def parse_answer_section(response, start_pos):
+def parse_answer_section(response, offset):
     """
-    Parse a DNS answer section and return the resource record in human-readable format.
+    Parse DNS answer section with detailed debugging.
     """
-    # For simplicity, assume we are parsing an A record (IPv4 address)
-    # In real scenarios, you'd need to handle various record types (A, MX, NS, etc.)
-    i = start_pos
-    domain_name_pointer = struct.unpack("!H", response[i:i+2])[0]
-    i += 2
-    print("domain name pointer is: ", domain_name_pointer)
-    # Skip the pointer (if pointer is used, it's 0xC000 and points to the domain name in the question section)
-    if domain_name_pointer >= 0xC000:
-        domain_name = parse_domain_name(response, i)[0]  # Follow the pointer
-    else:
-        domain_name = parse_domain_name(response, i)[0]
-    
-    record_type, record_class, ttl, length = struct.unpack("!HHIH", response[i+2:i+10])
-    i += 10
-    
-    # Handle A record (IPv4 address)
-    if record_type == 1:  # A record type
-        ip_address = socket.inet_ntoa(response[i:i+4])
-        return f"Answer: {domain_name} IN A {ip_address}", i + 4
-    
-    # For simplicity, we handle only A records here; other record types can be added as needed
-    return f"Answer: {domain_name} IN UNKNOWN", i
+    try:
+        print(f"\nDebug - Starting answer section parse at offset: {offset}")
+        print(f"Debug - Response bytes from offset: {response[offset:].hex()}")
+
+        # Parse the name using the pointer mechanism
+        name, next_offset = parse_dns_name(response, offset)
+        print(f"Debug - After name parse - Name: {name}, new offset: {next_offset}")
+        print(f"Debug - Remaining bytes: {response[next_offset:].hex()}")
+
+        # Ensure enough bytes for the Type/Class/TTL/Length fields
+        if next_offset + 10 > len(response):
+            raise ValueError(f"Response truncated. Length: {len(response)}, needed: {next_offset + 10}")
+
+        # Parse Type, Class, TTL, and RDLENGTH
+        type_class_ttl_length = response[next_offset:next_offset + 10]
+        print(f"Debug - Type/Class/TTL/Length bytes: {type_class_ttl_length.hex()}")
+
+        rtype, rclass, ttl, rdlength = struct.unpack('!HHIH', type_class_ttl_length)
+        print(f"Debug - Parsed fields: type={rtype}, class={rclass}, ttl={ttl}, rdlength={rdlength}")
+
+        next_offset += 10  # Move offset past fixed fields
+
+        # Validate RDLENGTH for A records (must be 4 bytes)
+        if rtype == 1:  # A record
+            if rdlength != 4:
+                raise ValueError(f"Invalid A record length: {rdlength} (expected 4)")
+
+        # Ensure enough bytes for the resource data
+        if next_offset + rdlength > len(response):
+            raise ValueError(f"Response truncated. Length: {len(response)}, needed: {next_offset + rdlength}")
+
+        # Extract and format the IP address for A records
+        if rtype == 1 and rclass == 1:  # A record in IN class
+            ip_bytes = response[next_offset:next_offset + rdlength]
+            print(f"Debug - IP bytes: {ip_bytes.hex()}")
+            ip_address = '.'.join(str(b) for b in ip_bytes)
+            return f"{name} IN A {ip_address}", next_offset + rdlength
+
+        # Skip unsupported types or non-IN class
+        print(f"Debug - Unsupported record type={rtype} or class={rclass}. Skipping.")
+        return None, next_offset + rdlength
+
+    except Exception as e:
+        logging.error(f"Error parsing answer section: {str(e)}", exc_info=True)
+        return None, offset
 
 
 
-def parse_domain_name(response, start_pos=12, visited_pointers=None):
+
+def parse_dns_name(response, offset):
     """
-    Extracts the domain name from the DNS query, supporting compression.
+    Parse DNS name with debug logging.
     """
-    domain_name = ""
-    i = start_pos
-    visited_pointers = visited_pointers or set()
+    try:
+        name_parts = []
+        original_offset = offset
+        
+        # Debug output
+        print(f"Starting to parse name at offset {offset}")
+        print(f"First few bytes: {response[offset:offset+10].hex()}")
+        
+        while offset < len(response):
+            length = response[offset]
+            print(f"Label length byte at offset {offset}: {length}")
+            
+            # Check for compression
+            if length & 0xC0 == 0xC0:
+                print(f"Found compression pointer at offset {offset}")
+                pointer = ((length & 0x3F) << 8) | response[offset + 1]
+                print(f"Pointer value: {pointer}")
+                offset = pointer
+                continue
+            
+            # Check end of name
+            if length == 0:
+                break
+            
+            # Debug check for invalid length
+            if length > 63:
+                print(f"WARNING: Invalid label length {length} at offset {offset}")
+                print(f"Surrounding bytes: {response[max(0,offset-5):offset+5].hex()}")
+                raise ValueError(f"Label length {length} exceeds maximum of 63")
+            
+            offset += 1
+            if offset + length > len(response):
+                raise ValueError("Label extends beyond message")
+            
+            label = response[offset:offset + length]
+            try:
+                name_parts.append(label.decode('ascii'))
+                print(f"Decoded label: {name_parts[-1]}")
+            except UnicodeDecodeError:
+                raise ValueError("Invalid character in domain name")
+            
+            offset += length
+            
+        name = '.'.join(name_parts)
+        print(f"Final parsed name: {name}")
+        return name, offset + 1
+        
+    except Exception as e:
+        logging.error(f"Error parsing DNS name: {str(e)}")
+        return None, offset
 
-    while True:
-        if i >= len(response):
-            raise IndexError(f"Index out of range while parsing domain name at position {i}")
-
-        length = response[i]
-        i += 1
-
-        # Handle pointer (compression) if length byte starts with 0xC0
-        if length & 0xC0 == 0xC0:
-            if i + 1 >= len(response):
-                raise IndexError(f"Pointer exceeds response length at offset {i}")
-
-            pointer = struct.unpack("!H", response[i-1:i+1])[0]
-            pointer_offset = pointer & 0x3FFF  # Mask to get the lower 14 bits of the pointer
-
-            if pointer_offset in visited_pointers:
-                raise ValueError(f"Infinite loop detected in domain name pointers at offset {pointer_offset}")
-
-            visited_pointers.add(pointer_offset)
-            domain_name_part, _ = parse_domain_name(response, pointer_offset, visited_pointers)
-            domain_name += domain_name_part
-            break
-
-        # End of domain name (length byte is 0)
-        elif length == 0:
-            i += 1  # Move past the null byte that signifies the end of the domain name
-            break
-
-        # Regular label (length <= 63)
-        elif length <= 63:
-            if i + length > len(response):
-                raise IndexError(f"Not enough data to read label of length {length} at offset {i}")
-
-            label = response[i:i + length].decode('utf-8', errors='ignore')
-            domain_name += label + "."
-            i += length
-        else:
-            raise ValueError(f"Invalid label length: {length} at offset {i}")
-
-    return domain_name.rstrip('.'), i
-
+def parse_question_section(response, offset):
+    """
+    Parse DNS question section with improved error handling.
+    """
+    try:
+        # Parse the question name
+        qname, offset = parse_dns_name(response, offset)
+        if qname is None:
+            raise ValueError("Failed to parse question name")
+        
+        # Ensure we have enough bytes for qtype and qclass
+        if offset + 4 > len(response):
+            raise ValueError("Question section truncated")
+        
+        # Get question type and class
+        qtype, qclass = struct.unpack("!HH", response[offset:offset + 4])
+        return qname, qtype, qclass, offset + 4
+        
+    except Exception as e:
+        logging.error(f"Error parsing question section: {str(e)}")
+        return None, None, None, offset
 
 
 
