@@ -45,6 +45,7 @@ def resolve_query(query, cache: Cache, root_server: RootServer, tld_server: TLDS
 
     # Query Root Server
     root_response = root_server.handle_root_query(query)
+    print("your root response is ", root_response)
     if not root_response:
         logging.error(f"Root server could not resolve domain: {domain_name}")
         return build_error_response(query, rcode=3)  # NXDOMAIN
@@ -54,6 +55,7 @@ def resolve_query(query, cache: Cache, root_server: RootServer, tld_server: TLDS
     logging.debug(f"Referred TLD server IP: {tld_server_ip}")
 
     tld_response = tld_server.handle_tld_query(query)
+    print("your tld response is ", tld_response)
     if not tld_response:
         logging.error(f"TLD server could not resolve domain: {domain_name}")
         return build_error_response(query, rcode=3)  # NXDOMAIN

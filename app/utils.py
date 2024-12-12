@@ -2,6 +2,7 @@ import struct
 import socket
 import random
 import logging
+import dnslib
 
 # Constants for DNS message components
 QTYPE_A = 1      # Query Type for A records (IPv4 addresses)
@@ -62,14 +63,25 @@ def build_dns_query(domain_name, qtype=QTYPE_A, qclass=QCLASS_IN):
 def build_rr(name, rtype, rclass, ttl, rdata):
     """
     Builds a resource record.
+    
+    Parameters:
+        name (str): The domain name for the record.
+        rtype (int): The type of the record (e.g., 1 for A, 2 for NS).
+        rclass (int): The class of the record (e.g., 1 for IN).
+        ttl (int): The time-to-live value for the record.
+        rdata (bytes): The record data.
+    
+    Returns:
+        bytes: The resource record.
     """
     rr = b""
     for part in name.split("."):
-        rr += struct.pack("!B", len(part)) + part.encode()
+        rr += struct.pack("!B", len(part)) + part.encode("utf-8")  # Encode to bytes
     rr += b"\x00"  # End of domain name
     rr += struct.pack("!HHI", rtype, rclass, ttl)  # TYPE, CLASS, TTL
     rr += struct.pack("!H", len(rdata)) + rdata  # RDLENGTH and RDATA
     return rr
+
 
 def parse_dns_query(query):
     """
@@ -206,6 +218,82 @@ def bytes_to_ip(ip_bytes):
     return socket.inet_ntoa(ip_bytes)
 
 
+
+
+# def parse_dns_response(response):
+#     """
+#     Parse a DNS response and return a human-readable format using dnslib.
+#     """
+#     # Parse the DNS response using dnslib
+#     dns_record = dnslib.DNSRecord.parse(response)
+    
+#     # Extract the transaction ID, flags, and other relevant data
+#     transaction_id = dns_record.header.id
+#     flags = dns_record.header.rcode
+#     question_count = len(dns_record.q)
+#     answer_count = len(dns_record.a)
+
+#     # Initialize the response in human-readable format
+#     human_readable = []
+    
+#     # Append the transaction ID and flags
+#     human_readable.append(f"Transaction ID: {transaction_id}")
+#     human_readable.append(f"Flags: {hex(flags)}")
+
+#     # Process the question section
+#     questions = []
+#     for q in dns_record.q:
+#         questions.append(f"Question: {q.qname}, Type: {q.qtype}, Class: {q.qclass}")
+    
+#     human_readable.append("\n".join(questions))
+
+#     # Process the answer section
+#     answers = []
+#     for a in dns_record.a:
+#         answers.append(f"Answer: {a.rdata}")
+    
+#     human_readable.append("\n".join(answers))
+    
+#     return "\n".join(human_readable)
+
+
+# def parse_question_section(response):
+#     """
+#     Parse a DNS question section using dnslib.
+#     """
+#     dns_record = dnslib.DNSRecord.parse(response)
+#     questions = []
+#     for q in dns_record.q:
+#         questions.append(f"Domain Name: {q.qname}, Query Type: {q.qtype}, Query Class: {q.qclass}")
+    
+#     return questions
+
+
+# def parse_answer_section(response):
+#     """
+#     Parse a DNS answer section using dnslib.
+#     """
+#     dns_record = dnslib.DNSRecord.parse(response)
+#     answers = []
+#     for a in dns_record.a:
+#         # Handle specific record types (e.g., A record for IPv4 address)
+#         if a.rtype == 1:  # A record (IPv4)
+#             ip_address = socket.inet_ntoa(a.rdata)
+#             answers.append(f"Answer: {a.qname} IN A {ip_address}")
+#         else:
+#             answers.append(f"Answer: {a.qname} IN {a.rtype}")
+    
+#     return answers
+
+
+# def parse_domain_name(response):
+#     """
+#     Parse the domain name from the DNS response using dnslib.
+#     """
+#     dns_record = dnslib.DNSRecord.parse(response)
+#     domain_name = dns_record.q[0].qname
+#     return domain_name
+
 def parse_dns_response(response):
     """
     Parse a DNS response and return a human-readable format.
@@ -224,7 +312,7 @@ def parse_dns_response(response):
     # Append the transaction ID and flags in human-readable format
     human_readable.append(f"Transaction ID: {transaction_id}")
     human_readable.append(f"Flags: {hex(flags)}")
-    
+    print("human readable is: ", human_readable)
     # Process the question section
     current_position = 12
     questions = []
@@ -284,46 +372,107 @@ def parse_answer_section(response, start_pos):
     return f"Answer: {domain_name} IN UNKNOWN", i
 
 
-def parse_domain_name(response, start_pos, visited_pointers=None):
+
+def parse_domain_name(response, start_pos=12, visited_pointers=None):
     """
-    Parse a domain name from the response, handling labels and pointers.
+    Extracts the domain name from the DNS query, supporting compression.
     """
     domain_name = ""
-    i = start_pos #12
+    i = start_pos
     visited_pointers = visited_pointers or set()
-    print("response is ", len(response))
-    print("starting position is  ", start_pos)
+
     while True:
         if i >= len(response):
-            raise IndexError("Index out of range while parsing domain name")
+            raise IndexError(f"Index out of range while parsing domain name at position {i}")
 
         length = response[i]
-        print("length is ", length)
-        # Handle pointers (compression)
+        i += 1
+
+        # Handle pointer (compression) if length byte starts with 0xC0
         if length & 0xC0 == 0xC0:
-            pointer = struct.unpack("!H", response[i:i+2])[0]
-            i += 2
-            pointer_offset = pointer & 0x3FFF
+            if i + 1 >= len(response):
+                raise IndexError(f"Pointer exceeds response length at offset {i}")
+
+            pointer = struct.unpack("!H", response[i-1:i+1])[0]
+            pointer_offset = pointer & 0x3FFF  # Mask to get the lower 14 bits of the pointer
 
             if pointer_offset in visited_pointers:
-                raise ValueError("Infinite loop detected in domain name pointers")
-            
+                raise ValueError(f"Infinite loop detected in domain name pointers at offset {pointer_offset}")
+
             visited_pointers.add(pointer_offset)
-            domain_name += parse_domain_name(response, pointer_offset, visited_pointers)[0]
-            print(f"Parsing domain name at offset {i}, current domain: {domain_name}")
+            domain_name_part, _ = parse_domain_name(response, pointer_offset, visited_pointers)
+            domain_name += domain_name_part
             break
-        elif length == 0:  # End of domain name
-            i += 1
+
+        # End of domain name (length byte is 0)
+        elif length == 0:
+            i += 1  # Move past the null byte that signifies the end of the domain name
             break
-        else:  # Regular label
-            print(f"Parsing domain name at offset {i}, current domain: {domain_name}")
-            if i + length + 1 > len(response):
-                raise IndexError("Domain name length exceeds available data.")
-            
-            label = response[i+1:i+1+length].decode('utf-8', errors='ignore')
+
+        # Regular label (length <= 63)
+        elif length <= 63:
+            if i + length > len(response):
+                raise IndexError(f"Not enough data to read label of length {length} at offset {i}")
+
+            label = response[i:i + length].decode('utf-8', errors='ignore')
             domain_name += label + "."
-            i += length + 1
+            i += length
+        else:
+            raise ValueError(f"Invalid label length: {length} at offset {i}")
 
     return domain_name.rstrip('.'), i
+
+
+
+
+    """
+    Parse a domain name from the DNS response.
+    """
+    # domain_name = ""
+    # i = start_pos
+    # visited_pointers = visited_pointers or set()
+
+    # while True:
+    #     if i >= len(response):
+    #         raise IndexError(f"Index out of range while parsing domain name at position {i}")
+
+    #     length = response[i]
+    #     i += 1
+
+    #     # Handle pointers (compression)
+    #     if length & 0xC0 == 0xC0:
+    #         if i + 1 >= len(response):
+    #             raise IndexError(f"Pointer exceeds response length at offset {i}")
+
+    #         pointer = struct.unpack("!H", response[i-1:i+1])[0]
+    #         pointer_offset = pointer & 0x3FFF
+
+    #         if pointer_offset in visited_pointers:
+    #             raise ValueError(f"Infinite loop detected in domain name pointers at offset {pointer_offset}")
+
+    #         visited_pointers.add(pointer_offset)
+    #         domain_name_part, _ = parse_domain_name(response, pointer_offset, visited_pointers)
+    #         domain_name += domain_name_part
+    #         break
+
+    #     # End of domain name
+    #     elif length == 0:
+    #         i += 1  # Move past the null byte
+    #         break
+
+    #     # Regular label
+    #     elif length <= 63:
+    #         if i + length > len(response):
+    #             raise IndexError(f"Not enough data to read label of length {length} at offset {i}")
+
+    #         label = response[i:i + length].decode('utf-8', errors='ignore')
+    #         domain_name += label + "."
+    #         i += length
+    #     else:
+    #         raise ValueError(f"Label length exceeds maximum allowed (63): {length} at offset {i}")
+    
+    # return domain_name.rstrip('.'), i
+
+
 
 

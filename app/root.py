@@ -38,7 +38,7 @@ class RootServer:
         if tld in self.tld_mapping:
             tld_server_address = self.tld_mapping[tld]
             logging.info(f"Referring query for {domain_name} to TLD server at {tld_server_address}")
-            return self.build_referral_response(query, tld_server_address)
+            return self.build_referral_response(query, domain_name, tld_server_address)
         
         logging.error(f"TLD {tld} not found in root server mapping.")
         return self.build_error_response(query, rcode=3)  # NXDOMAIN
@@ -68,42 +68,56 @@ class RootServer:
         return extracted.suffix  # Returns the full TLD (e.g., "com", "co.uk")
     
     @staticmethod
-    def build_referral_response(query, tld_server_address):
+    def build_referral_response(query, ns_domain, ns_address):
         """
-        Constructs a referral response pointing to the TLD server.
+        Constructs a referral response pointing to a name server.
+        
+        Parameters:
+            query (bytes): The raw DNS query.
+            ns_domain (str): The domain name of the name server (e.g., "ns.example.com").
+            ns_address (str): The IP address of the name server (e.g., "192.168.1.1").
+        
+        Returns:
+            bytes: The DNS referral response.
         """
+        # Parse the query to extract necessary details
         transaction_id, domain_name, qtype, qclass = parse_dns_query(query)
         
         # DNS Header
-        flags = 0x8182  # Standard query response + Authoritative
-        qd_count = 1
-        an_count = 0
-        ns_count = 1
-        ar_count = 1
+        flags = 0x8180  # Standard query response (QR=1, AA=0, RCODE=0)
+        qd_count = 1  # Number of questions
+        an_count = 0  # Number of answers
+        ns_count = 1  # Number of authority records
+        ar_count = 1  # Number of additional records
+        
+        # Build the DNS header
         header = build_dns_header(transaction_id, flags, qd_count, an_count, ns_count, ar_count)
-
+        
         # Question Section
         question = build_dns_question(domain_name, qtype, qclass)
-
-        # Authority Section (Referral)
+        
+        # Authority Section (NS Record)
         ns_record = build_rr(
-            name=domain_name,
+            name=domain_name,  # The queried domain
             rtype=2,  # NS record
             rclass=1,  # IN class
-            ttl=3600,
-            rdata=format_ns_name("ns1.tld-server.com")
+            ttl=3600,  # TTL in seconds
+            rdata=format_ns_name(ns_domain)  # Ensure this returns a string
         )
-
-        # Additional Section (TLD Server IP)
+        
+        # Additional Section (A Record for the Name Server)
         additional_record = build_rr(
-            name="ns1.tld-server.com",
+            name=ns_domain,  # Pass as a string
             rtype=1,  # A record
-            rclass=1,
-            ttl=3600,
-            rdata=ip_to_bytes(tld_server_address)
+            rclass=1,  # IN class
+            ttl=3600,  # TTL in seconds
+            rdata=ip_to_bytes(ns_address)  # Name server IP address as bytes
         )
-
+        
+        # Return the constructed DNS response
         return header + question + ns_record + additional_record
+
+
 
     @staticmethod
     def build_error_response(query, rcode):
