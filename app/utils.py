@@ -5,14 +5,19 @@ import logging
 import dnslib
 
 # Constants for DNS message components
-QTYPE_A = 1      # Query Type for A records (IPv4 addresses)
-QTYPE_NS = 2     # Query Type for NS records
-QTYPE_CNAME = 5  # Query Type for CNAME records
-QTYPE_PTR = 12   # Query Type for PTR records
-QTYPE_MX = 15    # Query Type for MX records
-QTYPE_SOA = 6    # Query Type for SOA records
-QCLASS_IN = 1    # Internet (IN) class
+QTYPE_A = 1       # A host address (IPv4 addresses)
+QTYPE_NS = 2      # An authoritative name server
+QTYPE_CNAME = 5   # The canonical name for an alias
+QTYPE_SOA = 6     # Marks the start of a zone of authority
+QTYPE_PTR = 12    # A domain name pointer (reverse DNS)
+QTYPE_MX = 15     # Mail exchange
+QTYPE_TXT = 16    # Text strings (TXT records)
+QTYPE_AXFR = 252  # Request for transfer of a zone
+QTYPE_WKS = 11    # A well-known service description
+QTYPE_HINFO = 13  # Host information
+QTYPE_MINFO = 14  # Mailbox or mail list information
 
+QCLASS_IN = 1     # Internet (IN) class
 
 
 def build_dns_header(transaction_id, flags, qd_count, an_count, ns_count, ar_count):
@@ -106,7 +111,7 @@ def parse_dns_query(query):
             domain_parts.append(query[idx:idx + length].decode())
             idx += length
     except IndexError:
-        raise ValueError("Invalid DNS query: Domain name parsing failed")
+        raise ValueError("Infvalid DNS query: Domain name parsing failed")
 
     domain_name = ".".join(domain_parts)
     
@@ -294,6 +299,36 @@ def bytes_to_ip(ip_bytes):
 #     domain_name = dns_record.q[0].qname
 #     return domain_name
 
+
+import struct
+
+def extract_ip_from_answer(answer_section):
+    """
+    Extract the IP address from the answer section of a DNS response.
+
+    Args:
+        answer_section (str): The answer section from the DNS response (formatted as 'name IN A ip_address').
+
+    Returns:
+        str: The extracted IP address, or None if no valid A record is found.
+    """
+    try:
+        # Split the answer section by spaces to extract the components
+        parts = answer_section.split()
+
+        # Check if the record type is A (IPv4 address)
+        if len(parts) >= 4 and parts[2] == 'A':
+            ip_address = parts[3]
+            return ip_address
+        else:
+            print("Not an A record or invalid format.")
+            return None
+    except Exception as e:
+        print(f"Error extracting IP address: {str(e)}")
+        return None
+
+
+
 def parse_dns_response(response):
     """
     Parse DNS response with enhanced error handling.
@@ -315,11 +350,12 @@ def parse_dns_response(response):
             qname, qtype, qclass, new_pos = parse_question_section(response, current_pos)
             if qname:
                 questions.append(f"{qname} TYPE{qtype} CLASS{qclass}")
+            # print(questions)
             current_pos = new_pos
         
         # Parse answer section
         for _ in range(ancount):
-            answer, new_pos = parse_answer_section(response, current_pos)
+            answer, new_pos = parse_answer_section(response, current_pos, qname)
             if answer:
                 answers.append(answer)
             current_pos = new_pos
@@ -350,19 +386,20 @@ def parse_question_section(response, start_pos):
     return domain_name, qtype, qclass, i + 4
 
 
-
-def parse_answer_section(response, offset):
+def parse_answer_section(response, offset, domain_name):
     """
-    Parse DNS answer section with detailed debugging.
+    Parse DNS answer section with detailed debugging, using the domain name directly.
     """
     try:
-        print(f"\nDebug - Starting answer section parse at offset: {offset}")
-        print(f"Debug - Response bytes from offset: {response[offset:].hex()}")
+        # print(f"\nDebug - Starting answer section parse at offset: {offset}")
+        # print(f"Debug - Response bytes from offset: {response[offset:].hex()}")
 
-        # Parse the name using the pointer mechanism
-        name, next_offset = parse_dns_name(response, offset)
-        print(f"Debug - After name parse - Name: {name}, new offset: {next_offset}")
-        print(f"Debug - Remaining bytes: {response[next_offset:].hex()}")
+        # Use the provided domain name instead of parsing it
+        name = domain_name
+        # print(f"Debug - Provided domain name: {name}")
+
+        # After using the domain name, set next_offset to the given offset
+        next_offset = offset
 
         # Ensure enough bytes for the Type/Class/TTL/Length fields
         if next_offset + 10 > len(response):
@@ -370,15 +407,17 @@ def parse_answer_section(response, offset):
 
         # Parse Type, Class, TTL, and RDLENGTH
         type_class_ttl_length = response[next_offset:next_offset + 10]
-        print(f"Debug - Type/Class/TTL/Length bytes: {type_class_ttl_length.hex()}")
+        # print(f"Debug - Type/Class/TTL/Length bytes: {type_class_ttl_length.hex()}")
 
+        # Unpack the 10 bytes to get the type, class, ttl, and rdlength
         rtype, rclass, ttl, rdlength = struct.unpack('!HHIH', type_class_ttl_length)
-        print(f"Debug - Parsed fields: type={rtype}, class={rclass}, ttl={ttl}, rdlength={rdlength}")
+        # print(f"Debug - Parsed fields: type={rtype}, class={rclass}, ttl={ttl}, rdlength={rdlength}")
 
-        next_offset += 10  # Move offset past fixed fields
+        # Move offset past Type/Class/TTL/Length fields
+        next_offset += 10  
 
         # Validate RDLENGTH for A records (must be 4 bytes)
-        if rtype == 1:  # A record
+        if rtype == 1:  # A record (type 1)
             if rdlength != 4:
                 raise ValueError(f"Invalid A record length: {rdlength} (expected 4)")
 
@@ -386,22 +425,20 @@ def parse_answer_section(response, offset):
         if next_offset + rdlength > len(response):
             raise ValueError(f"Response truncated. Length: {len(response)}, needed: {next_offset + rdlength}")
 
-        # Extract and format the IP address for A records
+        # Extract and format the IP address for A records (rtype 1)
         if rtype == 1 and rclass == 1:  # A record in IN class
             ip_bytes = response[next_offset:next_offset + rdlength]
-            print(f"Debug - IP bytes: {ip_bytes.hex()}")
+            # print(f"Debug - IP bytes: {ip_bytes.hex()}")
             ip_address = '.'.join(str(b) for b in ip_bytes)
             return f"{name} IN A {ip_address}", next_offset + rdlength
 
         # Skip unsupported types or non-IN class
-        print(f"Debug - Unsupported record type={rtype} or class={rclass}. Skipping.")
+        # print(f"Debug - Unsupported record type={rtype} or class={rclass}. Skipping.")
         return None, next_offset + rdlength
 
     except Exception as e:
         logging.error(f"Error parsing answer section: {str(e)}", exc_info=True)
         return None, offset
-
-
 
 
 def parse_dns_name(response, offset):
@@ -413,51 +450,59 @@ def parse_dns_name(response, offset):
         original_offset = offset
         
         # Debug output
-        print(f"Starting to parse name at offset {offset}")
-        print(f"First few bytes: {response[offset:offset+10].hex()}")
+        # print(f"Starting to parse name at offset {offset}")
+        # print(f"First few bytes: {response[offset:offset+10].hex()}")
         
         while offset < len(response):
             length = response[offset]
-            print(f"Label length byte at offset {offset}: {length}")
+            # print(f"Label length byte at offset {offset}: {length}")
             
-            # Check for compression
+            # Check for compression (0xC0)
             if length & 0xC0 == 0xC0:
-                print(f"Found compression pointer at offset {offset}")
+                # print(f"Found compression pointer at offset {offset}")
                 pointer = ((length & 0x3F) << 8) | response[offset + 1]
-                print(f"Pointer value: {pointer}")
+                # print(f"Pointer value: {pointer}")
+                # Move the offset to the pointer location
                 offset = pointer
                 continue
             
-            # Check end of name
+            # Check for end of name (length byte = 0)
             if length == 0:
                 break
             
-            # Debug check for invalid length
+            # Debug check for invalid label length
             if length > 63:
                 print(f"WARNING: Invalid label length {length} at offset {offset}")
-                print(f"Surrounding bytes: {response[max(0,offset-5):offset+5].hex()}")
+                print(f"Surrounding bytes: {response[max(0, offset - 5):offset + 5].hex()}")
                 raise ValueError(f"Label length {length} exceeds maximum of 63")
             
+            # Increment offset to start of the label
             offset += 1
             if offset + length > len(response):
                 raise ValueError("Label extends beyond message")
             
+            # Extract the label and decode it
             label = response[offset:offset + length]
             try:
                 name_parts.append(label.decode('ascii'))
-                print(f"Decoded label: {name_parts[-1]}")
+                # print(f"Decoded label: {name_parts[-1]}")
             except UnicodeDecodeError:
                 raise ValueError("Invalid character in domain name")
             
+            # Update offset to move past the label
             offset += length
             
+        # Join parts to form the fully qualified domain name
         name = '.'.join(name_parts)
-        print(f"Final parsed name: {name}")
+        # print(f"Final parsed name: {name}")
+        
+        # Move the offset past the null byte that ends the name
         return name, offset + 1
         
     except Exception as e:
         logging.error(f"Error parsing DNS name: {str(e)}")
         return None, offset
+
 
 def parse_question_section(response, offset):
     """

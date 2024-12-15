@@ -1,6 +1,6 @@
 import struct
 import logging
-from cache import Cache
+from resolver_cache import Cache
 from udp_transport import UDPTransport
 from authoritative import AuthoritativeServer
 from root import RootServer
@@ -16,7 +16,8 @@ from utils import (
     ip_to_bytes,
     bytes_to_ip,
     format_ns_name,
-    extract_referred_ip
+    extract_referred_ip,
+    extract_ip_from_answer
 )
 
 
@@ -35,17 +36,22 @@ def resolve_query(query, cache: Cache, root_server: RootServer, tld_server: TLDS
         logging.error(f"Invalid query: {e}")
         return build_error_response(query, rcode=1)  # Format error (RCODE 1)
 
+    cache_key = (domain_name, qtype, qclass)
     # Check the cache for the response
-    cached_response = cache.get(query)
+    cached_response = cache.get(cache_key)
     if cached_response:
-        logging.info(f"Cache hit for domain: {domain_name}")
-        return cached_response
+        logging.info(f"Resolver cache hit for domain: {domain_name}")
+        human_readable = parse_dns_response(cached_response)
+        print("name server response is ", human_readable)
+        # IP_address, new_offset = extract_ip_from_answer(human_readable[])
+        # return IP_address
+        return human_readable
 
     logging.info(f"Cache miss for domain: {domain_name}. Querying root server.")
 
     # Query Root Server
     root_response = root_server.handle_root_query(query)
-    print("your root response is ", root_response)
+    # print("your root response is ", root_response)
     if not root_response:
         logging.error(f"Root server could not resolve domain: {domain_name}")
         return build_error_response(query, rcode=3)  # NXDOMAIN
@@ -55,7 +61,7 @@ def resolve_query(query, cache: Cache, root_server: RootServer, tld_server: TLDS
     logging.debug(f"Referred TLD server IP: {tld_server_ip}")
 
     tld_response = tld_server.handle_tld_query(query)
-    print("your tld response is ", tld_response)
+    # print("your tld response is ", tld_response)
     if not tld_response:
         logging.error(f"TLD server could not resolve domain: {domain_name}")
         return build_error_response(query, rcode=3)  # NXDOMAIN
@@ -72,9 +78,11 @@ def resolve_query(query, cache: Cache, root_server: RootServer, tld_server: TLDS
 
     # Cache the successful response
     logging.info(f"Caching response for domain: {domain_name}")
-    cache.store(query, authoritative_response)
+    cache.store(authoritative_response)
     human_readable = parse_dns_response(authoritative_response)
     print("name server response is ", human_readable)
+    # IP_address, new_offset = extract_ip_from_answer(human_readable[])
+    # return IP_address
     return human_readable
 
 def build_error_response(query, rcode):

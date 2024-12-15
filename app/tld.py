@@ -35,40 +35,43 @@ class TLDServer:
         self.ttl = 3600  # Default TTL for records
 
     def handle_tld_query(self, query):
-        """
-        Handles DNS queries by referring them to the correct authoritative server.
-        """
-        try:
-            transaction_id, domain_name, qtype, qclass = parse_dns_query(query)
-            domain_name = domain_name.lower()  # Ensure case-insensitivity
-            print("your query is for: " + domain_name)
-        except ValueError as e:
-            logging.error(f"Invalid query: {e}")
-            print("building error response")
-            return self.build_error_response(query, rcode=1)  # Format error (RCODE 1)
-        # Find the authoritative server for the domain
-        authoritative_server_address = self.find_authoritative_server(domain_name)
-        if authoritative_server_address:
-            logging.info(
-                f"Referring query for {domain_name} to authoritative server at {authoritative_server_address}"
-            )
-            return self.build_referral_response(query, domain_name, authoritative_server_address)
+            """
+            Handles DNS queries by referring them to the correct authoritative server.
+            """
+            try:
+                transaction_id, domain_name, qtype, qclass = parse_dns_query(query)
+                domain_name = domain_name.lower()  # Ensure case-insensitivity
+                print("Your query is for: " + domain_name)
+            except ValueError as e:
+                logging.error(f"Invalid query: {e}")
+                print("Building error response")
+                return self.build_error_response(query, rcode=1)  # Format error (RCODE 1)
 
-        # If no match found, return NXDOMAIN
-        logging.error(f"Domain {domain_name} not found in TLD server mapping.")
-        return self.build_error_response(query, rcode=3)  # NXDOMAIN
+            # Find the authoritative server for the domain
+            authoritative_server_address = self.find_authoritative_server(domain_name)
+            if authoritative_server_address:
+                logging.info(
+                    f"Referring query for {domain_name} to authoritative server at {authoritative_server_address}"
+                )
+                return self.build_referral_response(query, domain_name, authoritative_server_address)
+
+            # If no authoritative server is found, return an error response
+            print(f"No authoritative server found for {domain_name}")
+            return self.build_error_response(query, rcode=3)  # Name Error (RCODE 3)
+
 
     def find_authoritative_server(self, domain_name):
         """
         Finds the authoritative server for the given domain name.
-        Supports hierarchical domain matching.
+        Checks for exact domain name matches.
         """
-        parts = domain_name.split(".")
-        for i in range(len(parts)):
-            domain_to_check = ".".join(parts[i:])
-            if domain_to_check in self.authoritative_mapping:
-                return self.authoritative_mapping[domain_to_check]
+        # Check for exact domain name match in the mapping
+        if domain_name in self.authoritative_mapping:
+            return self.authoritative_mapping[domain_name]
+
+        # If no match is found, return None
         return None
+
 
     def build_referral_response(self, query, domain_name, next_server_ip):
         """

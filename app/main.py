@@ -2,7 +2,8 @@ import socket
 import threading
 import logging
 from resolver import resolve_query
-from cache import Cache
+from resolver_cache import Cache
+from name_cache import Cache
 from authoritative import AuthoritativeServer
 from root import RootServer
 from tld import TLDServer
@@ -58,7 +59,7 @@ def start_dns_server():
     tcp_transport.listen()
 
     logging.info(f"DNS server is running on {DNS_SERVER_IP}:{DNS_SERVER_UDP_PORT} for UDP...")
-    logging.info(f"DNS server is running on {DNS_SERVER_IP}:{DNS_SERVER_TCP_PORT} for TCP...")
+    # logging.info(f"DNS server is running on {DNS_SERVER_IP}:{DNS_SERVER_TCP_PORT} for TCP...")
 
     udp_thread = threading.Thread(target=process_queries, args=(query_queue, cache, root_server, tld_server, authoritative_server))
     udp_thread.start()
@@ -71,6 +72,7 @@ def resolve_domain_gui(domain, cache, root_server, tld_server, authoritative_ser
         if not domain:
             raise ValueError("No domain name provided")
         query_data = build_dns_query(domain)
+        print("your dns query is ", query_data)
         response = resolve_query(query_data, cache, root_server, tld_server, authoritative_server)
         return response
     except Exception as e:
@@ -129,6 +131,7 @@ def start_terminal_interface(cache, authoritative_server, tld_server, root_serve
         if domain_to_resolve:
             logging.info(f"Domain to resolve: {domain_to_resolve}")
             query_data = build_dns_query(domain_to_resolve)
+            logging.info(f"your dns message is {query_data}")
             response = resolve_query(query_data, cache, root_server, tld_server, authoritative_server)
             logging.info(f"Resolved response: {response}")
         else:

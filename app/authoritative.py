@@ -1,11 +1,13 @@
 import struct
 import logging
-from cache import Cache  # Import the Cache class
+from name_cache import Cache  # Import the Cache class
 from utils import parse_dns_query
+import random
 # Set up logging
+
 logging.basicConfig(level=logging.DEBUG)
 
-class AuthoritativeServer:
+class AuthoritativeServer: 
     def __init__(self, cache: Cache):
         """
         Initializes the authoritative DNS server with some predefined DNS records.
@@ -13,55 +15,64 @@ class AuthoritativeServer:
         self.cache = cache  # Use the passed-in cache instance
         self.records = {
             "example.com": {
-                "A": ["93.184.216.34"],
-                "NS": ["ns1.example.com.", "ns2.example.com."],
-                "MX": ["10 mail.example.com."],
+                "A": ["93.184.216.34", "93.184.216.35"],  # Multiple A records
+                "NS": ["ns1.example.com.", "ns2.example.com."],  # Multiple NS records
+                "MX": ["10 mail.example.com.", "20 backup.mail.example.com."],  # Multiple MX records
                 "SOA": ["ns1.example.com. admin.example.com. 2023120301 7200 3600 1209600 86400"],
-                "PTR": ["example.com."],
+                "PTR": ["example.com.", "reverse.example.com."],  # Multiple PTR records
+                "TXT": ["\"v=spf1 include:_spf.example.com ~all\""]  # Example TXT record
             },
             "mywebsite.com": {
-                "A": ["93.184.216.35"],
+                "A": ["93.184.216.35", "93.184.216.36"],
                 "NS": ["ns1.mywebsite.com.", "ns2.mywebsite.com."],
-                "MX": ["10 mail.mywebsite.com."],
+                "MX": ["10 mail.mywebsite.com.", "20 backup.mail.mywebsite.com."],
                 "SOA": ["ns1.mywebsite.com. admin.mywebsite.com. 2023120302 7200 3600 1209600 86400"],
+                "PTR": ["mywebsite.com.", "reverse.mywebsite.com."]
             },
             "opensource.org": {
-                "A": ["93.184.216.36"],
+                "A": ["93.184.216.36", "93.184.216.37"],
                 "NS": ["ns1.opensource.org.", "ns2.opensource.org."],
-                "MX": ["10 mail.opensource.org."],
+                "MX": ["10 mail.opensource.org.", "20 backup.mail.opensource.org."],
                 "SOA": ["ns1.opensource.org. admin.opensource.org. 2023120303 7200 3600 1209600 86400"],
+                "PTR": ["opensource.org.", "reverse.opensource.org."]
             },
             "networking.net": {
-                "A": ["93.184.216.37"],
+                "A": ["93.184.216.37", "93.184.216.38"],
                 "NS": ["ns1.networking.net.", "ns2.networking.net."],
-                "MX": ["10 mail.networking.net."],
+                "MX": ["10 mail.networking.net.", "20 backup.mail.networking.net."],
                 "SOA": ["ns1.networking.net. admin.networking.net. 2023120304 7200 3600 1209600 86400"],
+                "PTR": ["networking.net.", "reverse.networking.net."]
             },
             "university.edu": {
-                "A": ["93.184.216.38"],
+                "A": ["93.184.216.38", "93.184.216.39"],
                 "NS": ["ns1.university.edu.", "ns2.university.edu."],
-                "MX": ["10 mail.university.edu."],
+                "MX": ["10 mail.university.edu.", "20 backup.mail.university.edu."],
                 "SOA": ["ns1.university.edu. admin.university.edu. 2023120305 7200 3600 1209600 86400"],
+                "PTR": ["university.edu.", "reverse.university.edu."]
             },
             "government.gov": {
-                "A": ["93.184.216.39"],
+                "A": ["93.184.216.39", "93.184.216.40"],
                 "NS": ["ns1.government.gov.", "ns2.government.gov."],
-                "MX": ["10 mail.government.gov."],
+                "MX": ["10 mail.government.gov.", "20 backup.mail.government.gov."],
                 "SOA": ["ns1.government.gov. admin.government.gov. 2023120306 7200 3600 1209600 86400"],
+                "PTR": ["government.gov.", "reverse.government.gov."]
             },
             "techstartup.io": {
-                "A": ["93.184.216.40"],
+                "A": ["93.184.216.40", "93.184.216.41"],
                 "NS": ["ns1.techstartup.io.", "ns2.techstartup.io."],
-                "MX": ["10 mail.techstartup.io."],
+                "MX": ["10 mail.techstartup.io.", "20 backup.mail.techstartup.io."],
                 "SOA": ["ns1.techstartup.io. admin.techstartup.io. 2023120307 7200 3600 1209600 86400"],
+                "PTR": ["techstartup.io.", "reverse.techstartup.io."]
             },
             "innovators.tech": {
-                "A": ["93.184.216.41"],
+                "A": ["93.184.216.41", "93.184.216.42"],
                 "NS": ["ns1.innovators.tech.", "ns2.innovators.tech."],
-                "MX": ["10 mail.innovators.tech."],
+                "MX": ["10 mail.innovators.tech.", "20 backup.mail.innovators.tech."],
                 "SOA": ["ns1.innovators.tech. admin.innovators.tech. 2023120308 7200 3600 1209600 86400"],
+                "PTR": ["innovators.tech.", "reverse.innovators.tech."]
             },
         }
+
 
 
     def handle_name_query(self, query):
@@ -71,7 +82,7 @@ class AuthoritativeServer:
         """
         cached_response = self.cache.get(query)
         if cached_response:
-            logging.info("Cache hit")
+            logging.info("Authoritative server cache hit for domain: ", domain_name)
             return cached_response
 
         domain_name = self.parse_domain_name(query)
@@ -80,12 +91,12 @@ class AuthoritativeServer:
 
         query_type = self.parse_query_type(query)
 
-        logging.debug(f"Handling query for domain {domain_name}, type {query_type}")
+        # logging.debug(f"Handling query for domain {domain_name}, type {query_type}")
 
         if domain_name in self.records:
             if query_type in self.records[domain_name]:
-                response = self.build_response(domain_name, query_type)
-                self.cache.store(query, response)
+                response = self.build_response(query, domain_name, query_type)
+                self.cache.store(response)
                 return response
             else:
                 logging.error(f"Query type {query_type} not found for {domain_name}")
@@ -95,16 +106,17 @@ class AuthoritativeServer:
             return self.build_error_response(query, rcode=3)
 
 
-    def build_response(self, domain_name, query_type):
+    def build_response(self, query, domain_name, query_type):
         """
         Builds the DNS response with detailed debugging.
         """
         try:
+            transaction_id, domain_name, qtype, qclass = parse_dns_query(query)
+
             # Header section
-            transaction_id = 1234
-            flags = 0x8180
+            flags = 0x8180  # Standard query response (QR=1, AA=0, RCODE=0)
             questions = 1
-            answers = len(self.records[domain_name][query_type])
+            answers = len(self.records[domain_name].get(query_type, []))
             authority_rrs = 0
             additional_rrs = 0
 
@@ -115,7 +127,6 @@ class AuthoritativeServer:
                             answers, 
                             authority_rrs, 
                             additional_rrs)
-            print(f"Debug - Header bytes: {header.hex()}")
 
             # Question section
             question = b''
@@ -123,39 +134,98 @@ class AuthoritativeServer:
                 question += bytes([len(label)]) + label.encode('ascii')
             question += b'\x00'  # Terminating byte
             question += struct.pack("!HH", 1, 1)  # QTYPE=A(1), QCLASS=IN(1)
-            print(f"Debug - Question bytes: {question.hex()}")
 
             # Answer section
             answer = b''
+            
             if query_type == "A" and domain_name in self.records:
                 for ip_address in self.records[domain_name][query_type]:
-                    print(f"Debug - Processing IP: {ip_address}")
-                    
-                    # Compression pointer
-                    pointer = struct.pack("!H", 0xC00C)
-                    answer += pointer
-                    print(f"Debug - Compression pointer bytes: {pointer.hex()}")
-                    
-                    # Type, Class, TTL, RDLength
                     fixed_fields = struct.pack("!HHIH", 
                                             1,      # TYPE: A
                                             1,      # CLASS: IN
                                             3600,   # TTL
                                             4)      # RDLENGTH: 4 bytes
                     answer += fixed_fields
-                    print(f"Debug - Fixed fields bytes: {fixed_fields.hex()}")
                     
-                    # IP address bytes
                     ip_parts = [int(part) for part in ip_address.split('.')]
                     ip_bytes = bytes(ip_parts)
                     answer += ip_bytes
-                    print(f"Debug - IP address bytes: {ip_bytes.hex()}")
-
-            print(f"Debug - Full answer bytes: {answer.hex()}")
-            response = header + question + answer
-            print(f"Debug - Full response bytes: {response.hex()}")
             
+            elif query_type == "MX" and domain_name in self.records:
+                for mail_server, priority in self.records[domain_name][query_type]:
+                    fixed_fields = struct.pack("!HHIH", 
+                                            15,     # TYPE: MX
+                                            1,      # CLASS: IN
+                                            3600,   # TTL
+                                            len(mail_server) + 2)  # RDLENGTH: length of mail server + 2 bytes for priority
+                    answer += fixed_fields
+                    
+                    # Priority field (2 bytes)
+                    answer += struct.pack("!H", priority)
+                    
+                    # Mail server field (string, encoded)
+                    answer += bytes([len(mail_server)]) + mail_server.encode('ascii')
+
+            elif query_type == "NS" and domain_name in self.records:
+                for ns_server in self.records[domain_name][query_type]:
+                    fixed_fields = struct.pack("!HHIH", 
+                                            2,      # TYPE: NS
+                                            1,      # CLASS: IN
+                                            3600,   # TTL
+                                            len(ns_server) + 2)  # RDLENGTH: length of NS server
+                    answer += fixed_fields
+                    
+                    # NS record (server name)
+                    answer += bytes([len(ns_server)]) + ns_server.encode('ascii')
+
+            elif query_type == "CNAME" and domain_name in self.records:
+                for cname in self.records[domain_name][query_type]:
+                    fixed_fields = struct.pack("!HHIH", 
+                                            5,      # TYPE: CNAME
+                                            1,      # CLASS: IN
+                                            3600,   # TTL
+                                            len(cname) + 1)  # RDLENGTH: length of CNAME
+                    answer += fixed_fields
+                    
+                    # CNAME record (canonical name)
+                    answer += bytes([len(cname)]) + cname.encode('ascii')
+
+            elif query_type == "SOA" and domain_name in self.records:
+                # SOA record fields: primary NS, hostmaster, serial, refresh, retry, expire, minimum TTL
+                soa_fields = self.records[domain_name][query_type]
+                fixed_fields = struct.pack("!HHIH", 
+                                            6,      # TYPE: SOA
+                                            1,      # CLASS: IN
+                                            3600,   # TTL
+                                            20)     # RDLENGTH: sum of the field lengths
+                answer += fixed_fields
+
+                # SOA record fields (in order)
+                for field in soa_fields:
+                    if isinstance(field, int):
+                        answer += struct.pack("!I", field)  # Integer values (serial, refresh, retry, expire, etc.)
+                    else:
+                        answer += bytes([len(field)]) + field.encode('ascii')  # String fields (NS, hostmaster)
+
+            elif query_type == "PTR" and domain_name in self.records:
+                for ptr_record in self.records[domain_name][query_type]:
+                    fixed_fields = struct.pack("!HHIH", 
+                                            12,     # TYPE: PTR
+                                            1,      # CLASS: IN
+                                            3600,   # TTL
+                                            len(ptr_record) + 1)  # RDLENGTH: length of PTR record
+                    answer += fixed_fields
+                    
+                    # PTR record (reverse DNS)
+                    answer += bytes([len(ptr_record)]) + ptr_record.encode('ascii')
+
+            # Full response
+            response = header + question + answer
             return response
+
+        except Exception as e:
+            logging.error(f"Error building DNS response: {e}")
+            return None
 
         except Exception as e:
             logging.error(f"Error in build_response: {str(e)}", exc_info=True)
