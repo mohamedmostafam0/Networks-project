@@ -123,17 +123,33 @@ def start_gui(cache, authoritative_server, tld_server, root_server):
     # Run the Tkinter loop
     root.mainloop()
 
+
 def start_terminal_interface(cache, authoritative_server, tld_server, root_server):
     """Start the terminal interface for DNS resolution."""
     logging.info("Starting terminal-based DNS resolution...")
     while True:
         domain_to_resolve = input("Enter the domain you want to resolve (or press Ctrl+C to exit): ").strip()
+        
         if domain_to_resolve:
-            logging.info(f"Domain to resolve: {domain_to_resolve}")
-            query_data = build_dns_query(domain_to_resolve)
-            logging.info(f"your dns message is {query_data}")
-            response = resolve_query(query_data, cache, root_server, tld_server, authoritative_server)
-            logging.info(f"Resolved response: {response}")
+            # Ask if the user wants a recursive or iterative query
+            query_type = input("Do you want a recursive (r) or iterative (i) query? (r/i): ").strip().lower()
+            
+            if query_type == 'r':
+                logging.info(f"Domain to resolve (recursive): {domain_to_resolve}")
+                # For recursive query, pass the appropriate flag to resolve_query
+                query_data = build_dns_query(domain_to_resolve)
+                logging.info(f"Your DNS message is {query_data}")
+                response = resolve_query(query_data, cache, root_server, tld_server, authoritative_server, is_tcp=False, recursive=True)
+                logging.info(f"Resolved response: {response}")
+            elif query_type == 'i':
+                logging.info(f"Domain to resolve (iterative): {domain_to_resolve}")
+                # For iterative query, pass the appropriate flag to resolve_query
+                query_data = build_dns_query(domain_to_resolve)
+                logging.info(f"Your DNS message is {query_data}")
+                response = resolve_query(query_data, cache, root_server, tld_server, authoritative_server, is_tcp=False, recursive=False)
+                logging.info(f"Resolved response: {response}")
+            else:
+                print("Invalid input. Please enter 'r' for recursive or 'i' for iterative.")
         else:
             print("No domain entered. Please try again.")
 

@@ -24,7 +24,7 @@ from utils import (
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 
-def resolve_query(query, cache: Cache, root_server: RootServer, tld_server: TLDServer, authoritative_server: AuthoritativeServer):
+def resolve_query(query, cache: Cache, root_server: RootServer, tld_server: TLDServer, authoritative_server: AuthoritativeServer,is_tcp=False):
     """
     Resolves a DNS query by checking the cache and querying the Root, TLD, and Authoritative servers in sequence.
     """
@@ -79,10 +79,18 @@ def resolve_query(query, cache: Cache, root_server: RootServer, tld_server: TLDS
     # Cache the successful response
     logging.info(f"Caching response for domain: {domain_name}")
     cache.store(authoritative_response)
+    if len(authoritative_response) > 512:
+        logging.info("Response size exceeds 512 bytes, setting TC flag and returning over TCP.")
+        if not is_tcp:  # If this is a UDP query and response is truncated, we should use TCP
+            # Set the TC flag in the DNS header to indicate truncation
+            authoritative_response = set_tc_flag(authoritative_response)
+            return authoritative_response
+        else:
+            human_readable = parse_dns_response(authoritative_response)
+            return human_readable
+
+    # Return the response as a regular UDP response
     human_readable = parse_dns_response(authoritative_response)
-    print("name server response is ", human_readable)
-    # IP_address, new_offset = extract_ip_from_answer(human_readable[])
-    # return IP_address
     return human_readable
 
 def build_error_response(query, rcode):
@@ -103,3 +111,18 @@ def build_error_response(query, rcode):
 
     return header + question  # Return the header and question section
 
+def set_tc_flag(response):
+    """
+    Sets the TC flag in the DNS header to indicate that the response is truncated.
+    This is used when sending the response over TCP.
+    """
+    # Unpack the DNS header
+    header = response[:12]  # First 12 bytes are the DNS header
+    transaction_id = struct.unpack("!H", header[:2])[0]
+    flags = struct.unpack("!H", header[2:4])[0]
+    # Set the TC flag (bit 1) to 1
+    flags |= 0x0200  # 0x0200 corresponds to the TC bit (bit 1 of the flags byte)
+    # Repack the DNS header with the updated flags
+    header = struct.pack("!HHHHHH", transaction_id, flags, 1, 0, 0, 0)
+    # Return the response with the updated header
+    return header + response[12:]
