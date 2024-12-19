@@ -10,33 +10,74 @@ from tld import TLDServer
 from udp_transport import UDPTransport
 from tcp_transport import TCPTransport
 from queue import Queue
-from utils import build_dns_query
+from utils import build_dns_query, parse_dns_query, construct_dns_response, parse_dns_response, parse_answer_section, parse_dns_final
 import tkinter as tk
 from tkinter import messagebox
 # Setup logging
 logging.basicConfig(level=logging.DEBUG)
 # DNS server configuration
-DNS_SERVER_IP = "localhost"
-DNS_SERVER_UDP_PORT = 1054
-DNS_SERVER_TCP_PORT = 1054
+DNS_SERVER_IP = "0.0.0.0"  # Allow access from any device on the local network
+DNS_SERVER_UDP_PORT = 1053
+DNS_SERVER_TCP_PORT = 1053
+
+# Constants for DNS message components
+QTYPE_A = 1       # A host address (IPv4 addresses)
+QTYPE_NS = 2      # An authoritative name server
+QTYPE_CNAME = 5   # The canonical name for an alias
+QTYPE_SOA = 6     # Marks the start of a zone of authority
+QTYPE_PTR = 12    # A domain name pointer (reverse DNS)
+QTYPE_MX = 15     # Mail exchange
+QTYPE_TXT = 16    # Text strings (TXT records)
+QTYPE_AXFR = 252  # Request for transfer of a zone
+QTYPE_WKS = 11    # A well-known service description
+QTYPE_HINFO = 13  # Host information
+QTYPE_MINFO = 14  # Mailbox or mail list information
+
+QCLASS_IN = 1     # Internet (IN) class
+
+
 def process_queries(queue, cache, root_server, tld_server, authoritative_server):
-    """
-    Processes DNS queries received from the transport layer.
-    """
-    print("Processing your query")
+    logging.info("Processing incoming DNS queries.")
+    print("queue is ", queue)
     while True:
         query_data = queue.get()
         if query_data:
-            domain_name = query_data['domain_name']
-            request = query_data['message']
-            respond = query_data['respond']
-            logging.info(f"Resolving query for domain: {domain_name}")
+            query_raw = query_data.get('raw_query')  # Ensure this is raw byte data
+            if query_raw:
+                logging.info(f"Received query with length: {len(query_raw)}")
 
-            # Process and resolve query
-            response = resolve_query(request, cache, root_server, tld_server, authoritative_server)
+                try:
+                    transaction_id, domain_name, qtype, qclass = parse_dns_query(query_raw)
+                    logging.info(f"Parsed DNS query for domain: {domain_name}")
 
-            # Send the response back to the client
-            respond(response)
+                    respond = query_data['respond']
+                    logging.info(f"Resolving query for domain: {domain_name}")
+
+                    response = resolve_query(
+                        query_raw,  # Pass raw query byte data
+                        cache,
+                        root_server,
+                        tld_server,
+                        authoritative_server,
+                        recursive=True,
+                        is_tcp=False
+                    )
+                    # answer, _, = parse_answer_section(response, 12, domain_name)
+
+                    logging.info(f"Resolved response for {domain_name}: {response}")
+                    final = construct_dns_response(response)
+                    logging.info(f"final is {final}")
+                    respond(final)
+                    # response_final = construct_dns_response(transaction_id, domain_name, qtype, qclass, answer, ttl)
+                except Exception as e:
+                    logging.error(f"Error parsing DNS query: {e}")
+            else:
+                logging.error("Invalid query: Missing 'raw_query' field in query_data.")
+
+
+
+
+
 
 def start_dns_server():
     """
@@ -132,21 +173,37 @@ def start_terminal_interface(cache, authoritative_server, tld_server, root_serve
         
         if domain_to_resolve:
             # Ask if the user wants a recursive or iterative query
-            query_type = input("Do you want a recursive (r) or iterative (i) query? (r/i): ").strip().lower()
-            
-            if query_type == 'r':
+            query_approach = input("Do you want a recursive (r) or iterative (i) query? (r/i): ").strip().lower()
+            qtype = input("Enter query type: ").strip().upper()
+            qtype_map = {
+            "A": QTYPE_A,
+            "NS": QTYPE_NS,
+            "CNAME": QTYPE_CNAME,
+            "SOA": QTYPE_SOA,
+            "PTR": QTYPE_PTR,
+            "MX": QTYPE_MX,
+            "TXT": QTYPE_TXT,
+            "AXFR": QTYPE_AXFR,
+            "WKS": QTYPE_WKS,
+            "HINFO": QTYPE_HINFO,
+            "MINFO": QTYPE_MINFO
+            }
+            qtype = qtype_map.get(qtype)
+            if not qtype:
+                print("invalid query type")
+            if query_approach == 'r':
                 logging.info(f"Domain to resolve (recursive): {domain_to_resolve}")
                 # For recursive query, pass the appropriate flag to resolve_query
-                query_data = build_dns_query(domain_to_resolve)
+                query_data = build_dns_query(domain_to_resolve, qtype)
                 logging.info(f"Your DNS message is {query_data}")
-                response = resolve_query(query_data, cache, root_server, tld_server, authoritative_server, is_tcp=False, recursive=True)
+                response = resolve_query(query_data, cache, root_server, tld_server, authoritative_server, recursive=True, is_tcp=False)
                 logging.info(f"Resolved response: {response}")
-            elif query_type == 'i':
+            elif query_approach == 'i':
                 logging.info(f"Domain to resolve (iterative): {domain_to_resolve}")
                 # For iterative query, pass the appropriate flag to resolve_query
-                query_data = build_dns_query(domain_to_resolve)
+                query_data = build_dns_query(domain_to_resolve, qtype)
                 logging.info(f"Your DNS message is {query_data}")
-                response = resolve_query(query_data, cache, root_server, tld_server, authoritative_server, is_tcp=False, recursive=False)
+                response = resolve_query(query_data, cache, root_server, tld_server, authoritative_server, recursive=False, is_tcp=False)
                 logging.info(f"Resolved response: {response}")
             else:
                 print("Invalid input. Please enter 'r' for recursive or 'i' for iterative.")

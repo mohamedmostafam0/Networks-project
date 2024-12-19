@@ -4,6 +4,25 @@ from name_cache import Cache  # Import the Cache class
 from utils import parse_dns_query
 import random
 # Set up logging
+QTYPE_A = 1       # A host address (IPv4 addresses)
+QTYPE_NS = 2      
+QTYPE_MD = 3      
+QTYPE_MF = 4      
+QTYPE_CNAME = 5   # The canonical name for an alias
+QTYPE_SOA = 6     # Marks the start of a zone of authority
+QTYPE_MB = 7     
+QTYPE_MG = 8     
+QTYPE_MR = 9     
+QTYPE_NULL = 10     
+QTYPE_WKS = 11     
+QTYPE_PTR = 12    # A domain name pointer (reverse DNS)
+QTYPE_HINFO = 13  # Host information
+QTYPE_MINFO = 14  # Mailbox or mail list information
+QTYPE_MX = 15     # Mail exchange
+QTYPE_TXT = 16    # Text strings (TXT records)
+QTYPE_AXFR = 252  
+QTYPE_MAILB = 253  
+QTYPE_MAILA = 254  
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -15,7 +34,8 @@ class AuthoritativeServer:
         self.cache = cache  # Use the passed-in cache instance
         self.records = {
             "example.com": {
-                "A": ["93.184.216.34", "93.184.216.35"],  # Multiple A records
+                # "A": ["93.184.216.34", "93.184.216.35"],  # Multiple A records
+                "A": ["93.184.216.34"],  # Multiple A records
                 "NS": ["ns1.example.com.", "ns2.example.com."],  # Multiple NS records
                 "MX": ["10 mail.example.com.", "20 backup.mail.example.com."],  # Multiple MX records
                 "SOA": ["ns1.example.com. admin.example.com. 2023120301 7200 3600 1209600 86400"],
@@ -78,32 +98,40 @@ class AuthoritativeServer:
     def handle_name_query(self, query):
         """
         Handles the DNS query by checking the cache first and then looking up the record for the domain.
-        Returns a DNS response if found or None if not found.
+        Returns a DNS response if found or an error response if not.
         """
         cached_response = self.cache.get(query)
         if cached_response:
             logging.info("Authoritative server cache hit for domain: ", domain_name)
             return cached_response
 
-        domain_name = self.parse_domain_name(query)
+        transaction_id, domain_name, qtype, qclass = parse_dns_query(query)
         if not domain_name:
             return self.build_error_response(query, rcode=3)  # Invalid domain name
 
-        query_type = self.parse_query_type(query)
+        logging.debug(f"Handling query for domain {domain_name}, type {qtype}")
 
-        # logging.debug(f"Handling query for domain {domain_name}, type {query_type}")
+        # Convert qtype from numeric to string representation
+        qtype_str = self.query_type_to_string(qtype)
+        logging.debug(f"Handling query for domain {domain_name}, type {qtype_str}")
+        if not qtype_str:
+            logging.error(f"Unknown query type: {qtype}")
+            return self.build_error_response(query, rcode=4)
 
         if domain_name in self.records:
-            if query_type in self.records[domain_name]:
-                response = self.build_response(query, domain_name, query_type)
+            logging.debug(f"Query types available for {domain_name}: {self.records[domain_name].keys()}")
+            if qtype_str in self.records[domain_name]:  # Match using string keys
+                response = self.build_response(query, domain_name, qtype_str)
+                logging.info(f"auth response howa {response}")
                 self.cache.store(response)
                 return response
             else:
-                logging.error(f"Query type {query_type} not found for {domain_name}")
+                logging.error(f"Query type {qtype_str} not found for {domain_name}")
                 return self.build_error_response(query, rcode=4)
         else:
             logging.error(f"Domain {domain_name} not found in authoritative records")
             return self.build_error_response(query, rcode=3)
+
 
 
     def build_response(self, query, domain_name, query_type):
@@ -144,20 +172,20 @@ class AuthoritativeServer:
                                             1,      # TYPE: A
                                             1,      # CLASS: IN
                                             3600,   # TTL
-                                            4)      # RDLENGTH: 4 bytes
+                                            4)      # RDLENGTH: 4 bytes (IPv4)
                     answer += fixed_fields
                     
                     ip_parts = [int(part) for part in ip_address.split('.')]
                     ip_bytes = bytes(ip_parts)
                     answer += ip_bytes
-            
+
             elif query_type == "MX" and domain_name in self.records:
                 for mail_server, priority in self.records[domain_name][query_type]:
                     fixed_fields = struct.pack("!HHIH", 
                                             15,     # TYPE: MX
                                             1,      # CLASS: IN
                                             3600,   # TTL
-                                            len(mail_server) + 2)  # RDLENGTH: length of mail server + 2 bytes for priority
+                                            len(mail_server) + 2)  # RDLENGTH: len(mail_server) + 2 bytes for priority
                     answer += fixed_fields
                     
                     # Priority field (2 bytes)
@@ -220,15 +248,12 @@ class AuthoritativeServer:
                     answer += bytes([len(ptr_record)]) + ptr_record.encode('ascii')
 
             # Full response
+            logging.info(f"header is {header}, question is {question}, answer is {answer}")
             response = header + question + answer
             return response
 
         except Exception as e:
             logging.error(f"Error building DNS response: {e}")
-            return None
-
-        except Exception as e:
-            logging.error(f"Error in build_response: {str(e)}", exc_info=True)
             return None
 
     def pack_domain_name(self, domain):
@@ -310,22 +335,33 @@ class AuthoritativeServer:
 
     def parse_query_type(self, query):
         """
-        Extracts the query type from the DNS query (e.g., 1 for A, 2 for NS, etc.) and maps it to its string equivalent.
+        Extracts the query type from the DNS query and maps it to its string equivalent.
         """
-        # Map of numeric query types to their string representations
+        if len(query) < 4:
+            logging.error("Query too short to extract query type")
+            return None
+
+        # Extract the query type (last 4-2 bytes for qtype)
+        query_type_num = struct.unpack("!H", query[-4:-2])[0]
+        logging.debug(f"Extracted numeric query type: {query_type_num}")
+
+        # Map numeric query type to its string representation
         query_type_map = {
-            1: "A",     # Host Address
-            2: "NS",    # Name Server
-            5: "CNAME", # Canonical Name
-            15: "MX",   # Mail Exchange
-            33: "PTR",  # Pointer
-            6: "SOA",   # Start of Authority
+            1: "A",
+            2: "NS",
+            5: "CNAME",
+            6: "SOA",
+            12: "PTR",
+            15: "MX",
+            16: "TXT",
+            33: "SRV",
         }
 
-        query_type_num = struct.unpack("!H", query[-4:-2])[0]  # Get the query type number from the query
-
-        # Return the mapped query type, or None if the type is unknown
+        # Log if the query type is unmapped
+        if query_type_num not in query_type_map:
+            logging.error(f"Unmapped query type: {query_type_num}")
         return query_type_map.get(query_type_num, None)
+
 
 
     def build_dns_header(self, transaction_id, flags, qd_count, an_count, ns_count, ar_count):
@@ -334,22 +370,61 @@ class AuthoritativeServer:
         """
         return struct.pack("!HHHHHH", transaction_id, flags, qd_count, an_count, ns_count, ar_count)
 
+    def query_type_to_string(self, qtype_num):
+        """
+        Convert numeric query type to its string representation.
+        Returns None if the query type is not recognized.
+        """
+        query_type_map = {
+            QTYPE_A: "A",
+            QTYPE_NS: "NS",
+            QTYPE_MD: "MD",
+            QTYPE_MF: "MF",
+            QTYPE_CNAME: "CNAME",
+            QTYPE_SOA: "SOA",
+            QTYPE_MB: "MB",
+            QTYPE_MG: "MG",
+            QTYPE_MR: "MR",
+            QTYPE_NULL: "NULL",
+            QTYPE_WKS: "WKS",
+            QTYPE_PTR: "PTR",
+            QTYPE_HINFO: "HINFO",
+            QTYPE_MINFO: "MINFO",
+            QTYPE_MX: "MX",
+            QTYPE_TXT: "TXT",
+            QTYPE_AXFR: "AXFR",
+            QTYPE_MAILB: "MAILB",
+            QTYPE_MAILA: "MAILA",
+        }
+        return query_type_map.get(qtype_num, None)
+
     def query_type_to_int(self, qtype):
         """
         Convert query type string to number.
         """
         type_map = {
-            'A': 1,
-            'NS': 2,
-            'CNAME': 5,
-            'SOA': 6,
-            'PTR': 12,
-            'MX': 15
+            "A": self.QTYPE_A,
+            "NS": self.QTYPE_NS,
+            "MD": self.QTYPE_MD,
+            "MF": self.QTYPE_MF,
+            "CNAME": self.QTYPE_CNAME,
+            "SOA": self.QTYPE_SOA,
+            "MB": self.QTYPE_MB,
+            "MG": self.QTYPE_MG,
+            "MR": self.QTYPE_MR,
+            "NULL": self.QTYPE_NULL,
+            "WKS": self.QTYPE_WKS,
+            "PTR": self.QTYPE_PTR,
+            "HINFO": self.QTYPE_HINFO,
+            "MINFO": self.QTYPE_MINFO,
+            "MX": self.QTYPE_MX,
+            "TXT": self.QTYPE_TXT,
+            "AXFR": self.QTYPE_AXFR,
+            "MAILB": self.QTYPE_MAILB,
+            "MAILA": self.QTYPE_MAILA,
         }
-        return type_map.get(qtype, 1)  # Default to A record type
-
-        return query_type_map.get(query_type, None)
-
+        return type_map.get(qtype, None)
+    
     def build_question_section(self, domain_name, query_type):
         """
         Builds the DNS question section for the query.

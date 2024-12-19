@@ -1,23 +1,16 @@
-iterative or recursive
-authoritative or non
-caching
+rfc 1034:
+database partitioning 
+SOA
+iterative query
+when server returns truncated, user tries a tcp connection
+zone transfers with tcp
+safety belt
 
-primary w secondary wala primary bas
-ipv6?
-database divided into zones
-dnssec only? wala ACL too?
+rfc 1035:
+sending through udp
+glue records for tld
+tld cache
 
-
-windows server- 
-dns in roles and features
-server manager
-
-packet tracer
-
-
-references
-table of figures
-
-
-
-
+rfc 2181:
+user authentication
+dnssec

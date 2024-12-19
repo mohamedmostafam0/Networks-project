@@ -2,23 +2,55 @@ import struct
 import socket
 import random
 import logging
-import dnslib
 
 # Constants for DNS message components
 QTYPE_A = 1       # A host address (IPv4 addresses)
-QTYPE_NS = 2      # An authoritative name server
+QTYPE_NS = 2      
+QTYPE_MD = 3      
+QTYPE_MF = 4      
 QTYPE_CNAME = 5   # The canonical name for an alias
 QTYPE_SOA = 6     # Marks the start of a zone of authority
+QTYPE_MB = 7     
+QTYPE_MG = 8     
+QTYPE_MR = 9     
+QTYPE_MR = 10     
+QTYPE_WKS = 11     
 QTYPE_PTR = 12    # A domain name pointer (reverse DNS)
-QTYPE_MX = 15     # Mail exchange
-QTYPE_TXT = 16    # Text strings (TXT records)
-QTYPE_AXFR = 252  # Request for transfer of a zone
-QTYPE_WKS = 11    # A well-known service description
 QTYPE_HINFO = 13  # Host information
 QTYPE_MINFO = 14  # Mailbox or mail list information
+QTYPE_MX = 15     # Mail exchange
+QTYPE_TXT = 16    # Text strings (TXT records)
+QTYPE_AXFR = 252  
+QTYPE_MAILB = 253  
+QTYPE_MAILA = 254  
 
 QCLASS_IN = 1     # Internet (IN) class
 
+def send_dns_query(server, query, is_tcp):
+    """
+    Sends a DNS query to the given server using either UDP or TCP based on the is_tcp flag.
+    """
+    # Prepare the socket based on the desired transport protocol
+    if is_tcp:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((server.ip, server.port))
+        sock.sendall(query)
+        response = sock.recv(4096)
+        sock.close()
+    else:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.sendto(query, (server.ip, server.port))
+        response, _ = sock.recvfrom(4096)
+        sock.close()
+
+    # Call the appropriate handle query method based on the server type
+    if isinstance(server, root_server):
+        return server.handle_root_query(response)
+    elif isinstance(server, tld_server):
+        return server.handle_tld_query(response)
+    elif isinstance(server, authoritative_server):
+        return server.handle_name_query(response)
+    return None
 
 def build_dns_header(transaction_id, flags, qd_count, an_count, ns_count, ar_count):
     """
@@ -26,7 +58,7 @@ def build_dns_header(transaction_id, flags, qd_count, an_count, ns_count, ar_cou
     """
     return struct.pack("!HHHHHH", transaction_id, flags, qd_count, an_count, ns_count, ar_count)
 
-def build_dns_question(domain_name, qtype=QTYPE_A, qclass=QCLASS_IN):
+def build_dns_question(domain_name, qtype, qclass=QCLASS_IN):
     """
     Builds the DNS question section.
     """
@@ -37,7 +69,7 @@ def build_dns_question(domain_name, qtype=QTYPE_A, qclass=QCLASS_IN):
     question += struct.pack("!HH", qtype, qclass)  # QTYPE and QCLASS
     return question
 
-def build_dns_query(domain_name, qtype=QTYPE_A, qclass=QCLASS_IN):
+def build_dns_query(domain_name, qtype, qclass=QCLASS_IN):
     """
     Constructs the full DNS query message, including the header and question sections.
     """
@@ -111,7 +143,7 @@ def parse_dns_query(query):
             domain_parts.append(query[idx:idx + length].decode())
             idx += length
     except IndexError:
-        raise ValueError("Infvalid DNS query: Domain name parsing failed")
+        raise ValueError("Invalid DNS query: Domain name parsing failed")
 
     domain_name = ".".join(domain_parts)
     
@@ -169,12 +201,9 @@ def validate_query(query):
         raise ValueError("Invalid DNS query: Query too short")
 
     transaction_id, domain_name, qtype, qclass = parse_dns_query(query)
-    print()
     # Ensure query type and class are supported
     if qclass != QCLASS_IN:
         raise ValueError("Unsupported query class")
-    if qtype not in [QTYPE_A, QTYPE_NS, QTYPE_CNAME, QTYPE_PTR, QTYPE_MX, QTYPE_SOA]:
-        raise ValueError("Unsupported query type")
 
     return transaction_id, domain_name, qtype, qclass
 
@@ -224,84 +253,6 @@ def bytes_to_ip(ip_bytes):
 
 
 
-
-# def parse_dns_response(response):
-#     """
-#     Parse a DNS response and return a human-readable format using dnslib.
-#     """
-#     # Parse the DNS response using dnslib
-#     dns_record = dnslib.DNSRecord.parse(response)
-    
-#     # Extract the transaction ID, flags, and other relevant data
-#     transaction_id = dns_record.header.id
-#     flags = dns_record.header.rcode
-#     question_count = len(dns_record.q)
-#     answer_count = len(dns_record.a)
-
-#     # Initialize the response in human-readable format
-#     human_readable = []
-    
-#     # Append the transaction ID and flags
-#     human_readable.append(f"Transaction ID: {transaction_id}")
-#     human_readable.append(f"Flags: {hex(flags)}")
-
-#     # Process the question section
-#     questions = []
-#     for q in dns_record.q:
-#         questions.append(f"Question: {q.qname}, Type: {q.qtype}, Class: {q.qclass}")
-    
-#     human_readable.append("\n".join(questions))
-
-#     # Process the answer section
-#     answers = []
-#     for a in dns_record.a:
-#         answers.append(f"Answer: {a.rdata}")
-    
-#     human_readable.append("\n".join(answers))
-    
-#     return "\n".join(human_readable)
-
-
-# def parse_question_section(response):
-#     """
-#     Parse a DNS question section using dnslib.
-#     """
-#     dns_record = dnslib.DNSRecord.parse(response)
-#     questions = []
-#     for q in dns_record.q:
-#         questions.append(f"Domain Name: {q.qname}, Query Type: {q.qtype}, Query Class: {q.qclass}")
-    
-#     return questions
-
-
-# def parse_answer_section(response):
-#     """
-#     Parse a DNS answer section using dnslib.
-#     """
-#     dns_record = dnslib.DNSRecord.parse(response)
-#     answers = []
-#     for a in dns_record.a:
-#         # Handle specific record types (e.g., A record for IPv4 address)
-#         if a.rtype == 1:  # A record (IPv4)
-#             ip_address = socket.inet_ntoa(a.rdata)
-#             answers.append(f"Answer: {a.qname} IN A {ip_address}")
-#         else:
-#             answers.append(f"Answer: {a.qname} IN {a.rtype}")
-    
-#     return answers
-
-
-# def parse_domain_name(response):
-#     """
-#     Parse the domain name from the DNS response using dnslib.
-#     """
-#     dns_record = dnslib.DNSRecord.parse(response)
-#     domain_name = dns_record.q[0].qname
-#     return domain_name
-
-
-import struct
-
 def extract_ip_from_answer(answer_section):
     """
     Extract the IP address from the answer section of a DNS response.
@@ -326,6 +277,107 @@ def extract_ip_from_answer(answer_section):
     except Exception as e:
         print(f"Error extracting IP address: {str(e)}")
         return None
+
+
+def parse_dns_final(response):
+    """
+    Parse a DNS response and construct a valid DNS reply to be sent to the client.
+    
+    This function ensures the output conforms to DNS protocol standards by including
+    the header, question, and answer sections while ignoring any extraneous or malformed data.
+    
+    Parameters:
+    - response: Raw DNS response bytes.
+    
+    Returns:
+    - A byte string representing a valid DNS response.
+    """
+    try:
+        if len(response) < 12:
+            raise ValueError("Response too short for DNS header")
+
+        # Parse header
+        transaction_id, flags, qdcount, ancount, nscount, arcount = struct.unpack("!HHHHHH", response[:12])
+        logging.info(f"Header: ID={transaction_id}, Flags=0x{flags:X}, QDCOUNT={qdcount}, ANCOUNT={ancount}, NSCOUNT={nscount}, ARCOUNT={arcount}")
+        
+        current_pos = 12
+        questions = []
+        answers = []
+
+        # Parse question section
+        for _ in range(qdcount):
+            qname, qtype, qclass, new_pos = parse_question_section(response, current_pos)
+            if qname is not None:
+                questions.append({
+                    "name": qname,
+                    "type": qtype,
+                    "class": qclass
+                })
+            current_pos = new_pos
+
+        # Parse answer section
+        for _ in range(ancount):
+            answer, new_pos = parse_answer_section(response, current_pos, questions[0]["name"])
+            if answer:
+                answers.append(answer)
+            current_pos = new_pos
+
+        # Reconstruct DNS response
+        reconstructed_response = bytearray(response[:12])  # Start with the header
+        for question in questions:
+            reconstructed_response.extend(construct_question_section(question))
+        for answer in answers:
+            reconstructed_response.extend(construct_answer_section(answer))
+
+        return bytes(reconstructed_response)
+
+    except Exception as e:
+        logging.error(f"Error parsing DNS response: {e}", exc_info=True)
+        return b""
+
+
+def construct_question_section(question):
+    """
+    Construct the question section of a DNS response.
+    
+    Parameters:
+    - question: A dictionary containing `name`, `type`, and `class`.
+    
+    Returns:
+    - Bytes representing the question section.
+    """
+    qname = construct_dns_name(question["name"])
+    qtype_qclass = struct.pack("!HH", question["type"], question["class"])
+    return qname + qtype_qclass
+
+
+def construct_answer_section(answer):
+    """
+    Construct the answer section of a DNS response.
+    
+    Parameters:
+    - answer: A dictionary containing the answer record details.
+    
+    Returns:
+    - Bytes representing the answer section.
+    """
+    name = construct_dns_name(answer["name"]) if isinstance(answer["name"], str) else answer["name"]
+    rtype_class_ttl_rdlength = struct.pack("!HHIH", answer["type"], answer["class"], answer["ttl"], len(answer["rdata"]))
+    return name + rtype_class_ttl_rdlength + answer["rdata"]
+
+
+def construct_dns_name(domain_name):
+    """
+    Convert a domain name into DNS name format.
+    
+    Parameters:
+    - domain_name: A string representing the domain name.
+    
+    Returns:
+    - Bytes representing the DNS name in the correct format.
+    """
+    labels = domain_name.split(".")
+    return b"".join(len(label).to_bytes(1, "big") + label.encode() for label in labels) + b"\x00"
 
 
 
@@ -375,16 +427,6 @@ def parse_dns_response(response):
             'questions': questions if 'questions' in locals() else [],
             'answers': answers if 'answers' in locals() else []
         }
-
-def parse_question_section(response, start_pos):
-    """
-    Parse a DNS question section and return the domain name and query type/class.
-    """
-    # The domain name in a question section is encoded as labels (length byte + label)
-    domain_name, i = parse_dns_name(response, start_pos)
-    qtype, qclass = struct.unpack("!HH", response[i:i+4])
-    return domain_name, qtype, qclass, i + 4
-
 
 def parse_answer_section(response, offset, domain_name):
     """
@@ -528,53 +570,86 @@ def parse_question_section(response, offset):
 
 
 
+
+import struct
+import logging
+
+def construct_dns_response(response):
     """
-    Parse a domain name from the DNS response.
-    """
-    # domain_name = ""
-    # i = start_pos
-    # visited_pointers = visited_pointers or set()
-
-    # while True:
-    #     if i >= len(response):
-    #         raise IndexError(f"Index out of range while parsing domain name at position {i}")
-
-    #     length = response[i]
-    #     i += 1
-
-    #     # Handle pointers (compression)
-    #     if length & 0xC0 == 0xC0:
-    #         if i + 1 >= len(response):
-    #             raise IndexError(f"Pointer exceeds response length at offset {i}")
-
-    #         pointer = struct.unpack("!H", response[i-1:i+1])[0]
-    #         pointer_offset = pointer & 0x3FFF
-
-    #         if pointer_offset in visited_pointers:
-    #             raise ValueError(f"Infinite loop detected in domain name pointers at offset {pointer_offset}")
-
-    #         visited_pointers.add(pointer_offset)
-    #         domain_name_part, _ = parse_domain_name(response, pointer_offset, visited_pointers)
-    #         domain_name += domain_name_part
-    #         break
-
-    #     # End of domain name
-    #     elif length == 0:
-    #         i += 1  # Move past the null byte
-    #         break
-
-    #     # Regular label
-    #     elif length <= 63:
-    #         if i + length > len(response):
-    #             raise IndexError(f"Not enough data to read label of length {length} at offset {i}")
-
-    #         label = response[i:i + length].decode('utf-8', errors='ignore')
-    #         domain_name += label + "."
-    #         i += length
-    #     else:
-    #         raise ValueError(f"Label length exceeds maximum allowed (63): {length} at offset {i}")
+    Processes a given DNS response and removes any parts that are not part of the 
+    DNS response according to RFC standards.
     
-    # return domain_name.rstrip('.'), i
+    Parameters:
+    - response: The raw DNS response bytes.
+                
+    Returns:
+    - A byte string containing only the valid parts of the DNS response.
+    """
+    try:
+        # Decode the header to determine the number of sections
+        transaction_id, flags, qdcount, ancount, nscount, arcount = struct.unpack("!HHHHHH", response[:12])
+        logging.info(f"tID is {transaction_id} flags are {flags} qdcount is {qdcount}, ancount is {ancount} nscount is {nscount} arcount is {arcount}")
+
+        # Validate the response format
+        if qdcount == 0 or ancount == 0:
+            raise ValueError("Invalid DNS response: Missing question or answer section.")
+
+        # Extract the question section length
+        question_offset = 12
+        while response[question_offset] != 0:  # Skip labels until null byte (end of domain name)
+            question_offset += response[question_offset] + 1
+            if question_offset >= len(response):  # Check for out-of-bounds
+                raise IndexError("Question section exceeds response length.")
+        question_offset += 5  # Skip the null byte, qtype, and qclass
+
+        # Extract the answer section length
+        answer_offset = question_offset
+        actual_answers = 0  # Track actual number of answers
+
+        for i in range(ancount):
+            logging.info(f"Processing answer {i+1}, current answer_offset: {answer_offset}")
+            
+            # Ensure we don't exceed the response length
+            if answer_offset >= len(response):
+                raise IndexError(f"Answer section exceeds response length for answer {i+1}.")
+            
+            # Skip domain name (compressed or not)
+            if response[answer_offset] & 0xC0 == 0xC0:  # Compressed name
+                answer_offset += 2  # Skip the compression pointer
+            else:
+                while response[answer_offset] != 0:
+                    answer_offset += response[answer_offset] + 1
+                    if answer_offset >= len(response):  # Check for out-of-bounds
+                        raise IndexError(f"Answer section domain name exceeds response length for answer {i+1}.")
+                answer_offset += 1  # Skip null byte at the end of domain name
+
+            # Skip Type, Class, TTL, RDLENGTH fields (10 bytes)
+            if answer_offset + 10 > len(response):
+                raise IndexError(f"Answer section truncated while reading Type/Class/TTL/RDLENGTH for answer {i+1}.")
+            
+            # Extract the RDATA length (RDLENGTH is at the offset)
+            rdata_length = struct.unpack("!H", response[answer_offset + 8:answer_offset + 10])[0]
+            logging.info(f"RDATA length is {rdata_length}")
+
+            # Skip the RDLENGTH (2 bytes) and RDATA itself
+            answer_offset += 10 + rdata_length  # Skip RDLENGTH and RDATA
+
+            # Count this as a valid answer
+            actual_answers += 1
+
+        # Ensure the number of answers in the response matches the 'ancount' value
+        if actual_answers != ancount:
+            logging.warning(f"Warning: Expected {ancount} answers, but found {actual_answers}.")
+
+        # Return only the valid part of the response (header + question + answer sections)
+        valid_response = response[:answer_offset]
+        logging.info(f"valid response is {valid_response}")
+        return valid_response
+
+    except Exception as e:
+        logging.error(f"Error constructing DNS response: {e}", exc_info=True)
+        return b""
+
 
 
 
