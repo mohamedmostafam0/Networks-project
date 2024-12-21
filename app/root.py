@@ -184,7 +184,6 @@ class RootServer:
             ttl=3600,  # TTL in seconds
             rdata=ip_to_bytes(ns_address)  # Convert the IP address to bytes (e.g., "192.168.1.1" -> b'\xc0\xa8\x01\x01')
         )
-        
         # Return the constructed DNS response
         return header + question + ns_record + additional_record
 

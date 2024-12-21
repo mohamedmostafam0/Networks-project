@@ -6,7 +6,7 @@ import hashlib
 import logging
 from utils import parse_dns_response, parse_question_section
 
-class Cache:
+class Cache2:
     def __init__(self, redis_host="localhost", redis_port=6379, db=0):
         """
         Initializes the Redis cache connection.
@@ -14,7 +14,7 @@ class Cache:
         self.client = redis.StrictRedis(host=redis_host, port=redis_port, db=db, decode_responses=False)
         print("Cache connection initialized")
 
-    def get(self, cache_key: tuple) -> Optional[bytes]:
+    def get(self, cache_key: tuple, transaction_id: int) -> Optional[bytes]:
         """
         Retrieves the DNS query response from the cache if it exists and is still valid (TTL not expired).
         """

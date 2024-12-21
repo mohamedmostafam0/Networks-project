@@ -2,7 +2,6 @@ import socket
 import threading
 from utils import parse_dns_query
 import logging
-# from dnslib import DNSRecord
 
 class UDPTransport:
     """
@@ -36,14 +35,14 @@ class UDPTransport:
                 data, client_addr = self.server.recvfrom(512)  # 512 bytes is max for DNS over UDP
                 threading.Thread(target=self._handle_udp_query, args=(data, client_addr), daemon=True).start()
             except Exception as e:
-                print(f"Error reading from UDP socket: {e}")
+                logging.info(f"Error reading from UDP socket: {e}")
 
     def _handle_udp_query(self, query_data, client_addr):
         logging.info(f"query data is {query_data}")
         try:
             query_raw = query_data  
             transaction_id, domain_name, qtype, qclass = parse_dns_query(query_raw)
-            print(f"Parsed DNS query for domain: {domain_name} from {client_addr}")
+            logging.info(f"Parsed DNS query for domain: {domain_name} from {client_addr} with transaction ID: {transaction_id}")
 
             self.queue.put({
                 "domain_name": domain_name,
@@ -55,7 +54,7 @@ class UDPTransport:
             })
 
         except Exception as e:
-            print(f"Error unpacking DNS query from {client_addr}: {e}")
+            logging.info(f"Error unpacking DNS query from {client_addr}: {e}")
 
     def close(self):
         """
@@ -63,4 +62,4 @@ class UDPTransport:
         """
         if self.server:
             self.server.close()
-            print("UDP transport closed")
+            logging.info("UDP transport closed")

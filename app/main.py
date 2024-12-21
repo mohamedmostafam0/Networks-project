@@ -2,15 +2,15 @@ import socket
 import threading
 import logging
 from resolver import resolve_query
-from resolver_cache import Cache
-from name_cache import Cache
+from resolver_cache import Cache2
+from name_cache import Cache1
 from authoritative import AuthoritativeServer
 from root import RootServer
 from tld import TLDServer
 from udp_transport import UDPTransport
 from tcp_transport import TCPTransport
 from queue import Queue
-from utils import build_dns_query, parse_dns_query, construct_dns_response, parse_dns_response, parse_answer_section, parse_dns_final
+from utils import build_dns_query, parse_dns_query, construct_dns_response, parse_dns_response, parse_answer_section, parse_dns_final, build_error_response
 import tkinter as tk
 from tkinter import messagebox
 # Setup logging
@@ -37,24 +37,24 @@ QCLASS_IN = 1     # Internet (IN) class
 
 
 def process_queries(queue, cache, root_server, tld_server, authoritative_server):
-    logging.info("Processing incoming DNS queries.")
-    print("queue is ", queue)
     while True:
         query_data = queue.get()
         if query_data:
-            query_raw = query_data.get('raw_query')  # Ensure this is raw byte data
+            query_raw = query_data.get('raw_query')
             if query_raw:
-                logging.info(f"Received query with length: {len(query_raw)}")
-
                 try:
                     transaction_id, domain_name, qtype, qclass = parse_dns_query(query_raw)
-                    logging.info(f"Parsed DNS query for domain: {domain_name}")
-
-                    respond = query_data['respond']
-                    logging.info(f"Resolving query for domain: {domain_name}")
-
+                    
+                    # Handle IPv6 queries
+                    if qtype == 28:
+                        logging.info(f"IPv6 query received for {domain_name}, sending Not Implemented")
+                        response = build_error_response(query_raw, rcode=4)
+                        query_data['respond'](response)
+                        continue
+                        
+                    # Normal processing for other queries
                     response = resolve_query(
-                        query_raw,  # Pass raw query byte data
+                        query_raw,
                         cache,
                         root_server,
                         tld_server,
@@ -62,30 +62,20 @@ def process_queries(queue, cache, root_server, tld_server, authoritative_server)
                         recursive=True,
                         is_tcp=False
                     )
-                    # answer, _, = parse_answer_section(response, 12, domain_name)
-
-                    logging.info(f"Resolved response for {domain_name}: {response}")
-                    final = construct_dns_response(response)
-                    logging.info(f"final is {final}")
-                    respond(final)
-                    # response_final = construct_dns_response(transaction_id, domain_name, qtype, qclass, answer, ttl)
+                    if response:
+                        query_data['respond'](response)
+                        
                 except Exception as e:
-                    logging.error(f"Error parsing DNS query: {e}")
-            else:
-                logging.error("Invalid query: Missing 'raw_query' field in query_data.")
-
-
-
-
-
+                    logging.error(f"Error processing query: {e}")
 
 def start_dns_server():
     """
     Starts the DNS server that listens for queries over UDP and TCP.
     """
     # Initialize components
-    cache = Cache()  # Initialize Redis-based cache
-    authoritative_server = AuthoritativeServer(cache)  # Handle authoritative queries
+    authoritative_cache = Cache1(redis_host="localhost", redis_port=6380)  # Authoritative server cache
+    resolver_cache = Cache2(redis_host="localhost", redis_port=6379)  # Resolver cache
+    authoritative_server = AuthoritativeServer(authoritative_cache)  # Handle authoritative queries    root_server = RootServer()  # Initialize RootServer
     root_server = RootServer()  # Initialize RootServer
     tld_server = TLDServer()    # Initialize TLDServer
     
@@ -100,12 +90,12 @@ def start_dns_server():
     tcp_transport.listen()
 
     logging.info(f"DNS server is running on {DNS_SERVER_IP}:{DNS_SERVER_UDP_PORT} for UDP...")
-    # logging.info(f"DNS server is running on {DNS_SERVER_IP}:{DNS_SERVER_TCP_PORT} for TCP...")
+    logging.info(f"DNS server is running on {DNS_SERVER_IP}:{DNS_SERVER_TCP_PORT} for TCP...")
 
-    udp_thread = threading.Thread(target=process_queries, args=(query_queue, cache, root_server, tld_server, authoritative_server))
+    udp_thread = threading.Thread(target=process_queries, args=(query_queue, resolver_cache, root_server, tld_server, authoritative_server))
     udp_thread.start()
 
-    return cache, authoritative_server, tld_server, root_server, udp_transport, tcp_transport, udp_thread
+    return resolver_cache, authoritative_server, tld_server, root_server, udp_transport, tcp_transport, udp_thread
 
 def resolve_domain_gui(domain, cache, root_server, tld_server, authoritative_server):
     """Resolve a domain name from the GUI."""

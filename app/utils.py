@@ -201,24 +201,42 @@ def validate_query(query):
         raise ValueError("Invalid DNS query: Query too short")
 
     transaction_id, domain_name, qtype, qclass = parse_dns_query(query)
+    if qtype not in [
+        QTYPE_A, QTYPE_NS, QTYPE_MD, QTYPE_MF, QTYPE_CNAME, QTYPE_SOA, QTYPE_MB, QTYPE_MG, QTYPE_MR, QTYPE_WKS, QTYPE_PTR, QTYPE_HINFO, QTYPE_MINFO, QTYPE_MX, QTYPE_TXT, QTYPE_AXFR, QTYPE_MAILB, QTYPE_MAILA]:
+        # Handle unsupported query types
+        print("Unsupported query type")
+        build_error_response(query, rcode=3)
     # Ensure query type and class are supported
     if qclass != QCLASS_IN:
         raise ValueError("Unsupported query class")
 
     return transaction_id, domain_name, qtype, qclass
 
-def build_error_response(transaction_id, query, rcode):
+def build_error_response(query, rcode):
     """
-    Builds a DNS response with an error code.
+    Constructs a DNS response with an error.
     """
-    flags = 0x8180 | rcode  # Standard response with error code
-    qd_count = 1  # Question count
-    an_count = 0  # Answer count
-    ns_count = 0  # Authority count
-    ar_count = 0  # Additional count
-    header = build_dns_header(transaction_id, flags, qd_count, an_count, ns_count, ar_count)
-    question = query[12:]  # Include the original question section
-    return header + question
+    try:
+        transaction_id = struct.unpack("!H", query[:2])[0]
+        
+        # For IPv6 queries, set specific flags to indicate not implemented
+        if query[len(query)-3] == 28:  # Check if query type is AAAA
+            flags = 0x8184  # Response + Not Implemented
+        else:
+            flags = 0x8183  # Standard error response
+            
+        header = struct.pack("!HHHHHH",
+                           transaction_id,
+                           flags,
+                           1,  # One question
+                           0,  # No answers
+                           0,  # No authority
+                           0)  # No additional
+                           
+        return header + query[12:]  # Original question section
+    except Exception as e:
+        logging.error(f"Error building error response: {e}")
+        return None
 
 def extract_referred_ip(response):
     """
@@ -430,56 +448,44 @@ def parse_dns_response(response):
 
 def parse_answer_section(response, offset, domain_name):
     """
-    Parse DNS answer section with detailed debugging, using the domain name directly.
+    Parse DNS answer section with detailed debugging.
     """
     try:
-        # print(f"\nDebug - Starting answer section parse at offset: {offset}")
-        # print(f"Debug - Response bytes from offset: {response[offset:].hex()}")
+        if offset + 12 > len(response):  # Minimum answer record length
+            return None, offset
 
-        # Use the provided domain name instead of parsing it
-        name = domain_name
-        # print(f"Debug - Provided domain name: {name}")
+        # Handle name compression
+        if response[offset] & 0xC0 == 0xC0:
+            offset += 2  # Skip compression pointer
+        else:
+            # Skip name fields until null terminator
+            while offset < len(response) and response[offset] != 0:
+                offset += response[offset] + 1
+            offset += 1  # Skip null terminator
 
-        # After using the domain name, set next_offset to the given offset
-        next_offset = offset
+        # Read fixed fields
+        if offset + 10 > len(response):  # TYPE(2) + CLASS(2) + TTL(4) + RDLENGTH(2)
+            return None, offset
 
-        # Ensure enough bytes for the Type/Class/TTL/Length fields
-        if next_offset + 10 > len(response):
-            raise ValueError(f"Response truncated. Length: {len(response)}, needed: {next_offset + 10}")
+        rtype, rclass, ttl = struct.unpack('!HHI', response[offset:offset + 8])
+        offset += 8
+        
+        rdlength = struct.unpack('!H', response[offset:offset + 2])[0]
+        offset += 2
 
-        # Parse Type, Class, TTL, and RDLENGTH
-        type_class_ttl_length = response[next_offset:next_offset + 10]
-        # print(f"Debug - Type/Class/TTL/Length bytes: {type_class_ttl_length.hex()}")
+        if offset + rdlength > len(response):
+            return None, offset
 
-        # Unpack the 10 bytes to get the type, class, ttl, and rdlength
-        rtype, rclass, ttl, rdlength = struct.unpack('!HHIH', type_class_ttl_length)
-        # print(f"Debug - Parsed fields: type={rtype}, class={rclass}, ttl={ttl}, rdlength={rdlength}")
-
-        # Move offset past Type/Class/TTL/Length fields
-        next_offset += 10  
-
-        # Validate RDLENGTH for A records (must be 4 bytes)
-        if rtype == 1:  # A record (type 1)
-            if rdlength != 4:
-                raise ValueError(f"Invalid A record length: {rdlength} (expected 4)")
-
-        # Ensure enough bytes for the resource data
-        if next_offset + rdlength > len(response):
-            raise ValueError(f"Response truncated. Length: {len(response)}, needed: {next_offset + rdlength}")
-
-        # Extract and format the IP address for A records (rtype 1)
-        if rtype == 1 and rclass == 1:  # A record in IN class
-            ip_bytes = response[next_offset:next_offset + rdlength]
-            # print(f"Debug - IP bytes: {ip_bytes.hex()}")
+        # For A records
+        if rtype == 1 and rdlength == 4:
+            ip_bytes = response[offset:offset + rdlength]
             ip_address = '.'.join(str(b) for b in ip_bytes)
-            return f"{name} IN A {ip_address}", next_offset + rdlength
+            return f"{domain_name} IN A {ip_address}", offset + rdlength
 
-        # Skip unsupported types or non-IN class
-        # print(f"Debug - Unsupported record type={rtype} or class={rclass}. Skipping.")
-        return None, next_offset + rdlength
+        return None, offset + rdlength
 
     except Exception as e:
-        logging.error(f"Error parsing answer section: {str(e)}", exc_info=True)
+        logging.error(f"Error parsing answer section: {str(e)}")
         return None, offset
 
 

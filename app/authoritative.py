@@ -1,7 +1,7 @@
 import struct
 import logging
-from name_cache import Cache  # Import the Cache class
-from utils import parse_dns_query
+from name_cache import Cache1  # Import the Cache class
+from utils import parse_dns_query, build_error_response
 import random
 # Set up logging
 QTYPE_A = 1       # A host address (IPv4 addresses)
@@ -27,7 +27,7 @@ QTYPE_MAILA = 254
 logging.basicConfig(level=logging.DEBUG)
 
 class AuthoritativeServer: 
-    def __init__(self, cache: Cache):
+    def __init__(self, cache: Cache1):
         """
         Initializes the authoritative DNS server with some predefined DNS records.
         """
@@ -98,40 +98,32 @@ class AuthoritativeServer:
     def handle_name_query(self, query):
         """
         Handles the DNS query by checking the cache first and then looking up the record for the domain.
-        Returns a DNS response if found or an error response if not.
         """
-        cached_response = self.cache.get(query)
-        if cached_response:
-            logging.info("Authoritative server cache hit for domain: ", domain_name)
-            return cached_response
+        try:
+            transaction_id, domain_name, qtype, qclass = parse_dns_query(query)
+            if not domain_name:
+                return self.build_error_response(query, rcode=3)  # Invalid domain name
 
-        transaction_id, domain_name, qtype, qclass = parse_dns_query(query)
-        if not domain_name:
-            return self.build_error_response(query, rcode=3)  # Invalid domain name
+            # Convert qtype from numeric to string representation
+            qtype_str = self.query_type_to_string(qtype)
+            
+            # If query type is not supported (like AAAA/28), return a "Not Implemented" response
+            if qtype_str is None or qtype_str not in ['A', 'NS', 'MX', 'SOA', 'PTR', 'TXT']:
+                return self.build_error_response(query, rcode=4)  # Not Implemented
 
-        logging.debug(f"Handling query for domain {domain_name}, type {qtype}")
-
-        # Convert qtype from numeric to string representation
-        qtype_str = self.query_type_to_string(qtype)
-        logging.debug(f"Handling query for domain {domain_name}, type {qtype_str}")
-        if not qtype_str:
-            logging.error(f"Unknown query type: {qtype}")
-            return self.build_error_response(query, rcode=4)
-
-        if domain_name in self.records:
-            logging.debug(f"Query types available for {domain_name}: {self.records[domain_name].keys()}")
-            if qtype_str in self.records[domain_name]:  # Match using string keys
-                response = self.build_response(query, domain_name, qtype_str)
-                logging.info(f"auth response howa {response}")
-                self.cache.store(response)
-                return response
+            if domain_name in self.records:
+                if qtype_str in self.records[domain_name]:
+                    response = self.build_response(query, domain_name, qtype_str)
+                    self.cache.store(response)
+                    return response
+                else:
+                    return self.build_error_response(query, rcode=4)
             else:
-                logging.error(f"Query type {qtype_str} not found for {domain_name}")
-                return self.build_error_response(query, rcode=4)
-        else:
-            logging.error(f"Domain {domain_name} not found in authoritative records")
-            return self.build_error_response(query, rcode=3)
+                return self.build_error_response(query, rcode=3)
 
+        except Exception as e:
+            logging.error(f"Error handling query: {e}")
+            return self.build_error_response(query, rcode=2)  # Server failure
 
 
     def build_response(self, query, domain_name, query_type):
@@ -164,20 +156,20 @@ class AuthoritativeServer:
             question += struct.pack("!HH", 1, 1)  # QTYPE=A(1), QCLASS=IN(1)
 
             # Answer section
+
+
             answer = b''
-            
             if query_type == "A" and domain_name in self.records:
                 for ip_address in self.records[domain_name][query_type]:
-                    fixed_fields = struct.pack("!HHIH", 
-                                            1,      # TYPE: A
-                                            1,      # CLASS: IN
-                                            3600,   # TTL
-                                            4)      # RDLENGTH: 4 bytes (IPv4)
-                    answer += fixed_fields
-                    
+                    answer += b'\xc0\x0c'  # Compression pointer to domain name
+                    answer += struct.pack("!HH", 
+                                    1,    # TYPE A
+                                    1)    # CLASS IN
+                    answer += struct.pack("!I", 3600)  # TTL
+                    answer += struct.pack("!H", 4)     # RDLENGTH (4 for IPv4)
                     ip_parts = [int(part) for part in ip_address.split('.')]
-                    ip_bytes = bytes(ip_parts)
-                    answer += ip_bytes
+                    answer += bytes(ip_parts)          # RDATA (IP address
+
 
             elif query_type == "MX" and domain_name in self.records:
                 for mail_server, priority in self.records[domain_name][query_type]:
@@ -278,38 +270,6 @@ class AuthoritativeServer:
             ip_parts = [int(x) for x in record.split(".")]
             return struct.pack("!HHIH4B", 0xC00C, 1, 1, 3600, *ip_parts)
     
-
-
-    # def build_record(self, record, query_type):
-    #     """
-    #     Builds a DNS record based on the query type (A, MX, NS, SOA, PTR).
-    #     """
-    #     if query_type == "A":
-    #         # For A records, return the IPv4 address as a byte string
-    #         ip_address = struct.unpack("!4B", bytes(map(int, record.split("."))))
-    #         return struct.pack("!HHIH4B", 0xC00C, 1, 1, 3600, *ip_address)
-    #     elif query_type == "NS" or query_type == "MX" or query_type == "PTR":
-    #         # For NS, MX, PTR (Return fully qualified domain name)
-    #         return struct.pack("!HHIH", 0xC00C, 1, 1, 3600, len(record), *record.encode())
-    #     elif query_type == "SOA":
-    #         # For SOA records, return the SOA data (Start of Authority)
-    #         return struct.pack("!HHIH", 0xC00C, 6, 1, 3600, len(record), *record.encode())
-    #     return b""  # Default to empty if no matching type found
-
-    def build_error_response(self, query, rcode):
-        """
-        Constructs a DNS response with an error (e.g., NXDOMAIN).
-        """
-        transaction_id, _, _, _ = parse_dns_query(query)
-        flags = 0x8180 | rcode  # Standard query response with the provided error code
-        qd_count = 1  # One question
-        an_count = 0  # No answer records
-        ns_count = 0  # No authority records
-        ar_count = 0  # No additional records
-        header = self.build_dns_header(transaction_id, flags, qd_count, an_count, ns_count, ar_count)
-        question = query[12:]  # Include the original question section
-        return header + question
-
 
     def parse_domain_name(self, query):
         """
