@@ -1,8 +1,8 @@
 import struct
 import logging
-from name_cache import Cache1  # Import the Cache class
+from name_cache import NameCache  # Import the Cache class
 from utils import parse_dns_query, build_error_response
-import random
+
 # Set up logging
 QTYPE_A = 1       # A host address (IPv4 addresses)
 QTYPE_NS = 2      
@@ -27,21 +27,30 @@ QTYPE_MAILA = 254
 logging.basicConfig(level=logging.DEBUG)
 
 class AuthoritativeServer: 
-    def __init__(self, cache: Cache1):
+    def __init__(self, cache: NameCache):
         """
         Initializes the authoritative DNS server with some predefined DNS records.
         """
         self.cache = cache  # Use the passed-in cache instance
         self.records = {
             "example.com": {
-                # "A": ["93.184.216.34", "93.184.216.35"],  # Multiple A records
-                "A": ["93.184.216.34"],  # Multiple A records
-                "NS": ["ns1.example.com.", "ns2.example.com."],  # Multiple NS records
-                "MX": ["10 mail.example.com.", "20 backup.mail.example.com."],  # Multiple MX records
+                "A": ["93.184.216.34"],
+                "NS": ["ns1.example.com.", "ns2.example.com."],
+                "MX": ["10 mail.example.com.", "20 backup.mail.example.com."],
                 "SOA": ["ns1.example.com. admin.example.com. 2023120301 7200 3600 1209600 86400"],
-                "PTR": ["example.com.", "reverse.example.com."],  # Multiple PTR records
-                "TXT": ["\"v=spf1 include:_spf.example.com ~all\""]  # Example TXT record
+                "PTR": ["example.com."],
+                "TXT": ["v=spf1 include:_spf.example.com ~all"],
+                "CNAME": ["alias.example.com."],
+                "MG": ["mailgroup@example.com"],
+                "MR": ["mailrename@example.com"],
+                "NULL": [""],
+                "WKS": ["93.184.216.34"],
+                "HINFO": ["Intel i7", "Ubuntu Linux"],
+                "MINFO": ["admin@example.com", "errors@example.com"],
+                "MAILB": ["mailbackup@example.com"],
+                "MAILA": ["mailalternate@example.com"],
             },
+
             "mywebsite.com": {
                 "A": ["93.184.216.35", "93.184.216.36"],
                 "NS": ["ns1.mywebsite.com.", "ns2.mywebsite.com."],
@@ -61,14 +70,34 @@ class AuthoritativeServer:
                 "NS": ["ns1.networking.net.", "ns2.networking.net."],
                 "MX": ["10 mail.networking.net.", "20 backup.mail.networking.net."],
                 "SOA": ["ns1.networking.net. admin.networking.net. 2023120304 7200 3600 1209600 86400"],
-                "PTR": ["networking.net.", "reverse.networking.net."]
+                "PTR": ["networking.net."],
+                "TXT": ["v=spf1 include:_spf.networking.net ~all"],
+                "CNAME": ["alias.networking.net."],
+                "MG": ["mailgroup@networking.net"],
+                "MR": ["mailrename@networking.net"],
+                "NULL": [""],
+                "WKS": ["93.184.216.37"],
+                "HINFO": ["Intel i7", "Ubuntu Linux"],
+                "MINFO": ["admin@networking.net", "errors@networking.net"],
+                "MAILB": ["mailbackup@networking.net"],
+                "MAILA": ["mailalternate@networking.net"],
             },
             "university.edu": {
                 "A": ["93.184.216.38", "93.184.216.39"],
                 "NS": ["ns1.university.edu.", "ns2.university.edu."],
                 "MX": ["10 mail.university.edu.", "20 backup.mail.university.edu."],
                 "SOA": ["ns1.university.edu. admin.university.edu. 2023120305 7200 3600 1209600 86400"],
-                "PTR": ["university.edu.", "reverse.university.edu."]
+                "PTR": ["university.edu."],
+                "TXT": ["v=spf1 include:_spf.university.edu ~all"],
+                "CNAME": ["alias.university.edu."],
+                "MG": ["mailgroup@university.edu"],
+                "MR": ["mailrename@university.edu"],
+                "NULL": [""],
+                "WKS": ["93.184.216.38"],
+                "HINFO": ["Intel i7", "Ubuntu Linux"],
+                "MINFO": ["admin@university.edu", "errors@university.edu"],
+                "MAILB": ["mailbackup@university.edu"],
+                "MAILA": ["mailalternate@university.edu"],
             },
             "government.gov": {
                 "A": ["93.184.216.39", "93.184.216.40"],
@@ -94,7 +123,6 @@ class AuthoritativeServer:
         }
 
 
-
     def handle_name_query(self, query):
         """
         Handles the DNS query by checking the cache first and then looking up the record for the domain.
@@ -108,7 +136,7 @@ class AuthoritativeServer:
             qtype_str = self.query_type_to_string(qtype)
             
             # If query type is not supported (like AAAA/28), return a "Not Implemented" response
-            if qtype_str is None or qtype_str not in ['A', 'NS', 'MX', 'SOA', 'PTR', 'TXT']:
+            if qtype_str is None or qtype_str not in ['A', 'NS', 'MX', 'SOA', 'PTR', 'TXT', 'CNAME', 'MAILA', 'MAILB']:
                 return self.build_error_response(query, rcode=4)  # Not Implemented
 
             if domain_name in self.records:
@@ -153,100 +181,145 @@ class AuthoritativeServer:
             for label in domain_name.split('.'):
                 question += bytes([len(label)]) + label.encode('ascii')
             question += b'\x00'  # Terminating byte
-            question += struct.pack("!HH", 1, 1)  # QTYPE=A(1), QCLASS=IN(1)
+            question += struct.pack("!HH", qtype, qclass)  # QTYPE=A(1), QCLASS=IN(1)
+
 
             # Answer section
-
-
             answer = b''
-            if query_type == "A" and domain_name in self.records:
-                for ip_address in self.records[domain_name][query_type]:
+            if query_type in ["A", "NS", "MX", "CNAME", "PTR", "TXT", "SOA", "MG", "MR", "HINFO", "MINFO", "MAILB", "MAILA"] and domain_name in self.records:
+                for record in self.records[domain_name].get(query_type, []):
                     answer += b'\xc0\x0c'  # Compression pointer to domain name
-                    answer += struct.pack("!HH", 
-                                    1,    # TYPE A
-                                    1)    # CLASS IN
-                    answer += struct.pack("!I", 3600)  # TTL
-                    answer += struct.pack("!H", 4)     # RDLENGTH (4 for IPv4)
-                    ip_parts = [int(part) for part in ip_address.split('.')]
-                    answer += bytes(ip_parts)          # RDATA (IP address
+                    answer += struct.pack("!HHI", getattr(self, f"QTYPE_{query_type}"), 1, 3600)  # TYPE, CLASS, TTL
 
-
-            elif query_type == "MX" and domain_name in self.records:
-                for mail_server, priority in self.records[domain_name][query_type]:
-                    fixed_fields = struct.pack("!HHIH", 
-                                            15,     # TYPE: MX
-                                            1,      # CLASS: IN
-                                            3600,   # TTL
-                                            len(mail_server) + 2)  # RDLENGTH: len(mail_server) + 2 bytes for priority
-                    answer += fixed_fields
-                    
-                    # Priority field (2 bytes)
-                    answer += struct.pack("!H", priority)
-                    
-                    # Mail server field (string, encoded)
-                    answer += bytes([len(mail_server)]) + mail_server.encode('ascii')
-
-            elif query_type == "NS" and domain_name in self.records:
-                for ns_server in self.records[domain_name][query_type]:
-                    fixed_fields = struct.pack("!HHIH", 
-                                            2,      # TYPE: NS
-                                            1,      # CLASS: IN
-                                            3600,   # TTL
-                                            len(ns_server) + 2)  # RDLENGTH: length of NS server
-                    answer += fixed_fields
-                    
-                    # NS record (server name)
-                    answer += bytes([len(ns_server)]) + ns_server.encode('ascii')
-
-            elif query_type == "CNAME" and domain_name in self.records:
-                for cname in self.records[domain_name][query_type]:
-                    fixed_fields = struct.pack("!HHIH", 
-                                            5,      # TYPE: CNAME
-                                            1,      # CLASS: IN
-                                            3600,   # TTL
-                                            len(cname) + 1)  # RDLENGTH: length of CNAME
-                    answer += fixed_fields
-                    
-                    # CNAME record (canonical name)
-                    answer += bytes([len(cname)]) + cname.encode('ascii')
-
-            elif query_type == "SOA" and domain_name in self.records:
-                # SOA record fields: primary NS, hostmaster, serial, refresh, retry, expire, minimum TTL
-                soa_fields = self.records[domain_name][query_type]
-                fixed_fields = struct.pack("!HHIH", 
-                                            6,      # TYPE: SOA
-                                            1,      # CLASS: IN
-                                            3600,   # TTL
-                                            20)     # RDLENGTH: sum of the field lengths
-                answer += fixed_fields
-
-                # SOA record fields (in order)
-                for field in soa_fields:
-                    if isinstance(field, int):
-                        answer += struct.pack("!I", field)  # Integer values (serial, refresh, retry, expire, etc.)
-                    else:
-                        answer += bytes([len(field)]) + field.encode('ascii')  # String fields (NS, hostmaster)
-
-            elif query_type == "PTR" and domain_name in self.records:
-                for ptr_record in self.records[domain_name][query_type]:
-                    fixed_fields = struct.pack("!HHIH", 
-                                            12,     # TYPE: PTR
-                                            1,      # CLASS: IN
-                                            3600,   # TTL
-                                            len(ptr_record) + 1)  # RDLENGTH: length of PTR record
-                    answer += fixed_fields
-                    
-                    # PTR record (reverse DNS)
-                    answer += bytes([len(ptr_record)]) + ptr_record.encode('ascii')
+                    if query_type == "A":
+                        answer += struct.pack("!H", 4)  # RDLENGTH
+                        answer += struct.pack("!4B", *map(int, record.split('.')))
+                    elif query_type == "TXT":
+                        answer += struct.pack("!H", len(record) + 1)  # RDLENGTH
+                        answer += struct.pack("!B", len(record)) + record.encode('ascii')
+                    elif query_type in ["CNAME", "NS", "PTR"]:
+                        answer += struct.pack("!H", len(record) + 1)  # RDLENGTH
+                        for label in record.split('.'):  # Encode domain name
+                            answer += bytes([len(label)]) + label.encode('ascii')
+                        answer += b'\x00'
+                    elif query_type in ["HINFO"]:
+                        cpu, os = record
+                        answer += struct.pack("!H", len(cpu) + len(os) + 2)
+                        answer += struct.pack("!B", len(cpu)) + cpu.encode('ascii')
+                        answer += struct.pack("!B", len(os)) + os.encode('ascii')
+                    elif query_type in ["MG", "MR", "MAILB", "MAILA"]: #cacheee
+                        answer += struct.pack("!H", len(record) + 1)
+                        answer += struct.pack("!B", len(record)) + record.encode('ascii')
+                    elif query_type == "MINFO":
+                        rmailbx, emailbx = record
+                        answer += struct.pack("!H", len(rmailbx) + len(emailbx) + 2)
+                        answer += struct.pack("!B", len(rmailbx)) + rmailbx.encode('ascii')
+                        answer += struct.pack("!B", len(emailbx)) + emailbx.encode('ascii')
+                    elif query_type == "NULL":
+                        answer += struct.pack("!H", 0)  # RDLENGTH is 0
+                    elif query_type == "WKS": # Not support asln
+                        answer += struct.pack("!H", len(record) + 1)
+                        answer += struct.pack("!B", len(record)) + record.encode('ascii')
 
             # Full response
-            logging.info(f"header is {header}, question is {question}, answer is {answer}")
             response = header + question + answer
             return response
-
         except Exception as e:
             logging.error(f"Error building DNS response: {e}")
             return None
+
+        #     # Answer section
+
+
+        #     answer = b''
+        #     if query_type == "A" and domain_name in self.records:
+        #         for ip_address in self.records[domain_name][query_type]:
+        #             answer += b'\xc0\x0c'  # Compression pointer to domain name
+        #             answer += struct.pack("!HH", 
+        #                             1,    # TYPE A
+        #                             1)    # CLASS IN
+        #             answer += struct.pack("!I", 3600)  # TTL
+        #             answer += struct.pack("!H", 4)     # RDLENGTH (4 for IPv4)
+        #             ip_parts = [int(part) for part in ip_address.split('.')]
+        #             answer += bytes(ip_parts)          # RDATA (IP address
+
+
+        #     elif query_type == "MX" and domain_name in self.records:
+        #         for mail_server, priority in self.records[domain_name][query_type]:
+        #             fixed_fields = struct.pack("!HHIH", 
+        #                                     15,     # TYPE: MX
+        #                                     1,      # CLASS: IN
+        #                                     3600,   # TTL
+        #                                     len(mail_server) + 2)  # RDLENGTH: len(mail_server) + 2 bytes for priority
+        #             answer += fixed_fields
+                    
+        #             # Priority field (2 bytes)
+        #             answer += struct.pack("!H", priority)
+                    
+        #             # Mail server field (string, encoded)
+        #             answer += bytes([len(mail_server)]) + mail_server.encode('ascii')
+
+        #     elif query_type == "NS" and domain_name in self.records:
+        #         for ns_server in self.records[domain_name][query_type]:
+        #             fixed_fields = struct.pack("!HHIH", 
+        #                                     2,      # TYPE: NS
+        #                                     1,      # CLASS: IN
+        #                                     3600,   # TTL
+        #                                     len(ns_server) + 2)  # RDLENGTH: length of NS server
+        #             answer += fixed_fields
+                    
+        #             # NS record (server name)
+        #             answer += bytes([len(ns_server)]) + ns_server.encode('ascii')
+
+        #     elif query_type == "CNAME" and domain_name in self.records:
+        #         for cname in self.records[domain_name][query_type]:
+        #             fixed_fields = struct.pack("!HHIH", 
+        #                                     5,      # TYPE: CNAME
+        #                                     1,      # CLASS: IN
+        #                                     3600,   # TTL
+        #                                     len(cname) + 1)  # RDLENGTH: length of CNAME
+        #             answer += fixed_fields
+                    
+        #             # CNAME record (canonical name)
+        #             answer += bytes([len(cname)]) + cname.encode('ascii')
+
+        #     elif query_type == "SOA" and domain_name in self.records:
+        #         # SOA record fields: primary NS, hostmaster, serial, refresh, retry, expire, minimum TTL
+        #         soa_fields = self.records[domain_name][query_type]
+        #         fixed_fields = struct.pack("!HHIH", 
+        #                                     6,      # TYPE: SOA
+        #                                     1,      # CLASS: IN
+        #                                     3600,   # TTL
+        #                                     20)     # RDLENGTH: sum of the field lengths
+        #         answer += fixed_fields
+
+        #         # SOA record fields (in order)
+        #         for field in soa_fields:
+        #             if isinstance(field, int):
+        #                 answer += struct.pack("!I", field)  # Integer values (serial, refresh, retry, expire, etc.)
+        #             else:
+        #                 answer += bytes([len(field)]) + field.encode('ascii')  # String fields (NS, hostmaster)
+
+        #     elif query_type == "PTR" and domain_name in self.records:
+        #         for ptr_record in self.records[domain_name][query_type]:
+        #             fixed_fields = struct.pack("!HHIH", 
+        #                                     12,     # TYPE: PTR
+        #                                     1,      # CLASS: IN
+        #                                     3600,   # TTL
+        #                                     len(ptr_record) + 1)  # RDLENGTH: length of PTR record
+        #             answer += fixed_fields
+                    
+        #             # PTR record (reverse DNS)
+        #             answer += bytes([len(ptr_record)]) + ptr_record.encode('ascii')
+
+        #     # Full response
+        #     # logging.info(f"header is {header}, question is {question}, answer is {answer}")
+        #     response = header + question + answer
+        #     return response
+
+        # except Exception as e:
+        #     logging.error(f"Error building DNS response: {e}")
+        #     return None
 
     def pack_domain_name(self, domain):
         """
@@ -258,8 +331,6 @@ class AuthoritativeServer:
                 length = len(label)
                 result += struct.pack('!B', length) + label.encode()
         return result + b'\x00'  # Terminate with null byte
-
-
 
     def build_record(self, record, query_type):
         """
@@ -303,7 +374,7 @@ class AuthoritativeServer:
 
         # Extract the query type (last 4-2 bytes for qtype)
         query_type_num = struct.unpack("!H", query[-4:-2])[0]
-        logging.debug(f"Extracted numeric query type: {query_type_num}")
+        # logging.debug(f"Extracted numeric query type: {query_type_num}")
 
         # Map numeric query type to its string representation
         query_type_map = {
@@ -321,8 +392,6 @@ class AuthoritativeServer:
         if query_type_num not in query_type_map:
             logging.error(f"Unmapped query type: {query_type_num}")
         return query_type_map.get(query_type_num, None)
-
-
 
     def build_dns_header(self, transaction_id, flags, qd_count, an_count, ns_count, ar_count):
         """
@@ -400,3 +469,22 @@ class AuthoritativeServer:
         qtype = struct.pack("!H", query_type)  # Query type as 2-byte unsigned short
         qclass = struct.pack("!H", 1)  # IN class (1)
         return qname + qtype + qclass
+
+
+        #master file
+
+    def save_master_files(self, output_dir="master_files"):
+        """
+        Saves the current DNS records into JSON master files.
+        """
+        import os
+        os.makedirs(output_dir, exist_ok=True)
+        
+        for domain, records in self.records.items():
+            file_name = f"{output_dir}/{domain.replace('.', '_')}.json"
+            try:
+                with open(file_name, 'w') as file:
+                    json.dump({"domain": domain, "records": records}, file, indent=4)
+                logging.info(f"Master file saved: {file_name}")
+            except Exception as e:
+                logging.error(f"Failed to save master file {file_name}: {e}")

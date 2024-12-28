@@ -4,9 +4,9 @@ import pickle
 from typing import Optional
 import hashlib
 import logging
-from utils import parse_dns_response, parse_question_section
+from utils import parse_question_section, parse_dns_query
 
-class Cache2:
+class ResolverCache:
     def __init__(self, redis_host="localhost", redis_port=6379, db=0):
         """
         Initializes the Redis cache connection.
@@ -15,60 +15,67 @@ class Cache2:
         print("Cache connection initialized")
 
     def get(self, cache_key: tuple, transaction_id: int) -> Optional[bytes]:
-        """
-        Retrieves the DNS query response from the cache if it exists and is still valid (TTL not expired).
-        """
-        # Serialize the cache key to a string
+        qname, qtype, qclass = cache_key
+        qname = qname.lower().rstrip('.')  # Normalize domain name
+        cache_key = (qname, qtype, qclass)  # Recreate normalized cache_key
+        # logging.debug(f"qname is {qname}, qtype is {qtype}, qclass is {qclass}")
+        # logging.debug(f"Trying to fetch cache for Key={cache_key} with transaction_id={transaction_id}")
         key_string = self._serialize_cache_key(cache_key)
+
+        if not key_string:
+            logging.error("Cache key serialization failed.")
+            return None
+
         cached_data = self.client.get(key_string)
-        
-        if cached_data:
-            try:
-                cached_response = pickle.loads(cached_data)
-            except Exception as e:
-                logging.error(f"Error deserializing cache data: {e}")
-                return None
-            if cached_response['ttl'] > time.time():
-                return cached_response['response']
-            else:
-                # Cache entry expired, delete it
+        # logging.debug(f"Trying to fetch cache for Key={key_string}, Cached Data={cached_data}")
+
+        if not cached_data:
+            logging.info(f"No cache entry found for Key={key_string}")
+            return None
+
+        try:
+            cache_entry = pickle.loads(cached_data)
+            # logging.debug(f"Deserialized Cache Entry: {cache_entry}")
+
+            if cache_entry['ttl'] < time.time():
+                # logging.info(f"Cache expired for Key={key_string}")
                 self.client.delete(key_string)
-                logging.info(f"Cache expired for key: {key_string}")
-        return None
+                return None
+
+            cached_response = cache_entry['response']
+            cached_transaction_id, _, _, _ = parse_dns_query(cached_response)
+
+            if cached_transaction_id != transaction_id:
+                # logging.info("Transaction ID mismatch. Updating transaction ID in cached response.")
+                response = bytearray(cached_response)
+                response[0:2] = transaction_id.to_bytes(2, byteorder='big')
+                return bytes(response)
+
+            return cached_response
+        except Exception as e:
+            logging.error(f"Error processing cached data: {e}")
+            return None
+
 
     def store(self, response: bytes):
-        """
-        Stores the DNS query response in the cache with a specified TTL.
-
-        Parameters:
-            response (bytes): The authoritative DNS response to store.
-            ttl (int): Time-to-live in seconds for the cached entry.
-        """
         ttl = 3600
+        logging.debug(f"storing in resolver cache")
         try:
-            # Ensure TTL is an integer
-            if not isinstance(ttl, int):
-                raise ValueError(f"TTL must be an integer, got {type(ttl)}: {ttl}")
-
-            # Extract the question section to build the cache key
             qname, qtype, qclass, _ = parse_question_section(response, 12)
+            qname = qname.lower().rstrip('.')  # Normalize domain name
             cache_key = (qname, qtype, qclass)
 
-            # Serialize the cache key to a string
             key_string = self._serialize_cache_key(cache_key)
-
-            # Create the cache entry
+            # logging.debug(f"Storing response in cache: Key={key_string}, TTL={ttl}")
             cache_entry = {
-                'response': response,  # Store the entire authoritative response
-                'ttl': time.time() + ttl  # Set TTL based on current time
+                'response': response,
+                'ttl': time.time() + ttl
             }
 
-            # Store in Redis
             self.client.setex(key_string, ttl, pickle.dumps(cache_entry))
-            logging.info(f"Stored response in cache for key: {key_string}")
+            logging.debug(f"Stored in cache: Key={key_string}, TTL={ttl}, Entry={cache_entry}")
         except Exception as e:
             logging.error(f"Error storing response in cache: {e}")
-
 
 
     def _serialize_cache_key(self, cache_key: tuple) -> str:

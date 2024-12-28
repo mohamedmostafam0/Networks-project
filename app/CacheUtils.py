@@ -6,15 +6,8 @@ import hashlib
 import logging
 from utils import parse_dns_response, parse_question_section, parse_dns_query
 
-class NameCache:
-    def __init__(self, redis_host="localhost", redis_port=6380, db=0):
-        """
-        Initializes the Redis cache connection.
-        """
-        self.client = redis.StrictRedis(host=redis_host, port=redis_port, db=db, decode_responses=False)
-        print("Cache connection initialized")
 
-    def get(self, cache_key: tuple, transaction_id: int) -> Optional[bytes]:
+def get(self, cache_key: tuple, transaction_id: int) -> Optional[bytes]:
         """
         Retrieves the DNS query response from the cache if it exists and is still valid (TTL not expired),
         ensuring the transaction ID matches the client's query.
@@ -57,37 +50,37 @@ class NameCache:
         return None
 
 
-    def store(self, response: bytes):
-        logging.info(f"storing response in name cache")
-        ttl = 3600
-        try:
-            qname, qtype, qclass, _ = parse_question_section(response, 12)
-            qname = qname.lower()  # Normalize domain to lowercase
-            cache_key = (qname, qtype, qclass)
+def store(self, response: bytes):
+    logging.info(f"storing response in cache")
+    ttl = 3600
+    try:
+        qname, qtype, qclass, _ = parse_question_section(response, 12)
+        qname = qname.lower()  # Normalize domain to lowercase
+        cache_key = (qname, qtype, qclass)
 
-            key_string = self._serialize_cache_key(cache_key)
+        key_string = self._serialize_cache_key(cache_key)
 
-            cache_entry = {
-                'response': response,
-                'ttl': time.time() + ttl
-            }
+        cache_entry = {
+            'response': response,
+            'ttl': time.time() + ttl
+        }
 
-            self.client.setex(key_string, ttl, pickle.dumps(cache_entry))
-            logging.info(f"Stored in cache: Key={key_string}, TTL={ttl}, Entry={cache_entry}")
-        except Exception as e:
-            logging.error(f"Error storing response in cache: {e}")
-
-
+        self.client.setex(key_string, ttl, pickle.dumps(cache_entry))
+        logging.info(f"Stored in cache: Key={key_string}, TTL={ttl}, Entry={cache_entry}")
+    except Exception as e:
+        logging.error(f"Error storing response in cache: {e}")
 
 
-    def _serialize_cache_key(self, cache_key: tuple) -> str:
-        """
-        Serializes a tuple cache key into a string format suitable for Redis.
 
-        Parameters:
-            cache_key (tuple): The cache key as (domain_name, qtype, qclass).
 
-        Returns:
-            str: A serialized string suitable for Redis.
-        """
-        return f"dns:{hashlib.sha256(':'.join(map(str, cache_key)).encode()).hexdigest()}"
+def _serialize_cache_key(self, cache_key: tuple) -> str:
+    """
+    Serializes a tuple cache key into a string format suitable for Redis.
+
+    Parameters:
+        cache_key (tuple): The cache key as (domain_name, qtype, qclass).
+
+    Returns:
+        str: A serialized string suitable for Redis.
+    """
+    return f"dns:{hashlib.sha256(':'.join(map(str, cache_key)).encode()).hexdigest()}"

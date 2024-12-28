@@ -2,15 +2,15 @@ import socket
 import threading
 import logging
 from resolver import resolve_query
-from resolver_cache import Cache2
-from name_cache import Cache1
+from name_cache import NameCache
+from resolver_cache import ResolverCache
 from authoritative import AuthoritativeServer
 from root import RootServer
 from tld import TLDServer
 from udp_transport import UDPTransport
 from tcp_transport import TCPTransport
 from queue import Queue
-from utils import build_dns_query, parse_dns_query, construct_dns_response, parse_dns_response, parse_answer_section, parse_dns_final, build_error_response
+from utils import build_dns_query, parse_dns_query, build_error_response
 import tkinter as tk
 from tkinter import messagebox
 # Setup logging
@@ -36,7 +36,7 @@ QTYPE_MINFO = 14  # Mailbox or mail list information
 QCLASS_IN = 1     # Internet (IN) class
 
 
-def process_queries(queue, cache, root_server, tld_server, authoritative_server):
+def process_queries(queue, authoritative_cache, resolver_cache, root_server, tld_server, authoritative_server):
     while True:
         query_data = queue.get()
         if query_data:
@@ -55,7 +55,8 @@ def process_queries(queue, cache, root_server, tld_server, authoritative_server)
                     # Normal processing for other queries
                     response = resolve_query(
                         query_raw,
-                        cache,
+                        authoritative_cache,
+                        resolver_cache,
                         root_server,
                         tld_server,
                         authoritative_server,
@@ -73,8 +74,10 @@ def start_dns_server():
     Starts the DNS server that listens for queries over UDP and TCP.
     """
     # Initialize components
-    authoritative_cache = Cache1(redis_host="localhost", redis_port=6380)  # Authoritative server cache
-    resolver_cache = Cache2(redis_host="localhost", redis_port=6379)  # Resolver cache
+    authoritative_cache = NameCache(redis_host="localhost", redis_port=6380)  # Authoritative server cache
+    resolver_cache = ResolverCache(redis_host="localhost", redis_port=6379)  # Resolver cache
+    if(authoritative_cache is None or resolver_cache is None):
+        logging.error("Failed to initialize caches")
     authoritative_server = AuthoritativeServer(authoritative_cache)  # Handle authoritative queries    root_server = RootServer()  # Initialize RootServer
     root_server = RootServer()  # Initialize RootServer
     tld_server = TLDServer()    # Initialize TLDServer
@@ -92,10 +95,10 @@ def start_dns_server():
     logging.info(f"DNS server is running on {DNS_SERVER_IP}:{DNS_SERVER_UDP_PORT} for UDP...")
     logging.info(f"DNS server is running on {DNS_SERVER_IP}:{DNS_SERVER_TCP_PORT} for TCP...")
 
-    udp_thread = threading.Thread(target=process_queries, args=(query_queue, resolver_cache, root_server, tld_server, authoritative_server))
+    udp_thread = threading.Thread(target=process_queries, args=(query_queue, authoritative_cache, resolver_cache, root_server, tld_server, authoritative_server))
     udp_thread.start()
 
-    return resolver_cache, authoritative_server, tld_server, root_server, udp_transport, tcp_transport, udp_thread
+    return authoritative_cache, resolver_cache, authoritative_server, tld_server, root_server, udp_transport, tcp_transport, udp_thread
 
 def resolve_domain_gui(domain, cache, root_server, tld_server, authoritative_server):
     """Resolve a domain name from the GUI."""
@@ -203,18 +206,20 @@ def start_terminal_interface(cache, authoritative_server, tld_server, root_serve
 def main():
     logging.info("Starting the DNS Server Agent...")
 
-    cache, authoritative_server, tld_server, root_server, udp_transport, tcp_transport, udp_thread = start_dns_server()
+    authoritative_cache, resolver_cache, authoritative_server, tld_server, root_server, udp_transport, tcp_transport, udp_thread = start_dns_server()
     
-    if cache is None or authoritative_server is None:
+    if authoritative_server is None:
         logging.error("Failed to start DNS server.")
     else:
         try:
             # Choose interface
             choice = input("Enter '1' for terminal interface or '2' for GUI: ").strip()
             if choice == '1':
-                start_terminal_interface(cache, authoritative_server, tld_server, root_server)
+                print("ok")
+                # start_terminal_interface(cache, authoritative_server, tld_server, root_server)
             elif choice == '2':
-                start_gui(cache, authoritative_server, tld_server, root_server)
+                print("ok")
+                # start_gui(cache, authoritative_server, tld_server, root_server)
             else:
                 print("Invalid choice. Exiting.")
         except KeyboardInterrupt:
