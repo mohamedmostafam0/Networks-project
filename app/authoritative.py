@@ -163,7 +163,7 @@ class AuthoritativeServer:
         try:
             # Parse the DNS query
             transaction_id, domain_name, qtype, qclass = parse_dns_query(query)
-            logging.info(f"Query: {query}, domain: {domain_name}, qtype: {qtype}, qclass: {qclass}")
+            # logging.info(f"Query: {query}, domain: {domain_name}, qtype: {qtype}, qclass: {qclass}")
 
             # Check if the domain and requested record type exist
             record_type = self.query_type_to_string(qtype)
@@ -177,14 +177,14 @@ class AuthoritativeServer:
             authority_rrs = 0
             additional_rrs = 0
             header = self.build_dns_header(transaction_id, flags, questions, answers, authority_rrs, additional_rrs)
-            logging.debug(f"Header: {header}")
+            # logging.debug(f"Header: {header}")
 
             # Question Section
             question = b''.join(
                 bytes([len(label)]) + label.encode('ascii') for label in domain_name.split('.')
             ) + b'\x00'
             question += struct.pack("!HH", qtype, qclass)
-            logging.debug(f"Question: {question}")
+            # logging.debug(f"Question: {question}")
 
             # Answer Section
             answer = b''
@@ -204,9 +204,20 @@ class AuthoritativeServer:
                 elif record_type == "MX":
                     # Mail exchange record
                     priority, mail_server = record.split(' ', 1)
-                    rdata, current_length = self.encode_domain_name_with_compression(mail_server, domain_offsets, current_length)
-                    rdata = struct.pack("!H", int(priority)) + rdata.rstrip(b'\x00')  # Remove extra null byte
+                    
+                    # Encode the mail server's domain name with compression
+                    mail_server_rdata, current_length = self.encode_domain_name_with_compression(mail_server, domain_offsets, current_length)
+                    
+                    # Construct the RDATA: priority + encoded domain name
+                    rdata = struct.pack("!H", int(priority)) + mail_server_rdata
+                    
+                    # Log the RDATA details for debugging
+                    # logging.debug(f"RDATA for MX record: {rdata} with length {len(rdata)}")
+                    
+                    # Add the MX record to the answer section
                     answer += struct.pack("!HHIH", QTYPE_MX, qclass, 3600, len(rdata)) + rdata
+                    
+                    # logging.debug(f"Answer after adding MX record: {answer} with length {len(answer)}")
 
                 elif record_type == "NS":
                     # Name server
@@ -239,9 +250,9 @@ class AuthoritativeServer:
 
             # Full Response
             response = header + question + answer
-            logging.debug(f"answer is {answer}")
-            logging.debug(f"Header size: {len(header)}, Question size: {len(question)}, Answer size: {len(answer)}, Total: {len(response)}")
-            logging.info(f"Response built: {response}")
+            # logging.debug(f"answer is {answer}")
+            # logging.debug(f"Header size: {len(header)}, Question size: {len(question)}, Answer size: {len(answer)}, Total: {len(response)}")
+            # logging.info(f"Response built: {response}")
             return response
 
         except Exception as e:
@@ -397,28 +408,31 @@ class AuthoritativeServer:
         - int: The updated current length of the message.
         """
         try:
-            logging.debug(f"Encoding domain name: {domain_name}")
-            logging.debug(f"Current domain offsets: {domain_offsets}")
-            logging.debug(f"Current message length: {current_length}")
+            # logging.debug(f"Encoding domain name: {domain_name}")
+            # logging.debug(f"Current domain offsets: {domain_offsets}")
+            # logging.debug(f"Current message length: {current_length}")
 
             if domain_name in domain_offsets:
                 # Use a compression pointer if the domain was already encoded
                 pointer = domain_offsets[domain_name]
-                logging.debug(f"Domain name '{domain_name}' already encoded at offset {pointer}. Using compression pointer.")
+                # logging.debug(f"Domain name '{domain_name}' already encoded at offset {pointer}. Using compression pointer.")
                 compressed_pointer = struct.pack("!H", 0xC000 | pointer)
-                logging.debug(f"Compressed pointer: {compressed_pointer}")
+                # logging.debug(f"Compressed pointer: {compressed_pointer}")
                 return compressed_pointer, current_length
             else:
                 # Encode the domain name fully and store its position
                 encoded_name = b''.join(
                     bytes([len(label)]) + label.encode('ascii') for label in domain_name.split('.')
-                ) + b'\x00'  # Null byte added for termination
-                logging.debug(f"Encoded domain name before storing: {encoded_name}")
+                )
+                if not encoded_name.endswith(b'\x00'):  # Ensure only one null byte for termination
+                    encoded_name += b'\x00'
+                # logging.debug(f"Encoded domain name before storing: {encoded_name}")
                 domain_offsets[domain_name] = current_length
                 return encoded_name, current_length + len(encoded_name)
         except Exception as e:
             logging.error(f"Error encoding domain name '{domain_name}': {e}")
-            raise            
+            raise
+
     def build_question_section(self, domain_name, query_type):
         """
         Builds the DNS question section for the query.
