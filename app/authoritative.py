@@ -2,6 +2,8 @@ import struct
 import logging
 from name_cache import NameCache  # Import the Cache class
 from utils import parse_dns_query, build_error_response
+import os
+
 
 # Set up logging
 QTYPE_A = 1       # A host address (IPv4 addresses)
@@ -116,7 +118,7 @@ class AuthoritativeServer:
             "innovators.tech": {
                 "A": ["93.184.216.41", "93.184.216.42"],
                 "NS": ["ns1.innovators.tech.", "ns2.innovators.tech."],
-                "MX": ["10 mail.innovators.tech.", "20 backup.mail.innovators.tech."],
+                "MX": ["10 mail.innovators.tech."],
                 "SOA": ["ns1.innovators.tech. admin.innovators.tech. 2023120308 7200 3600 1209600 86400"],
                 "PTR": ["innovators.tech.", "reverse.innovators.tech."]
             },
@@ -128,270 +130,197 @@ class AuthoritativeServer:
         Handles the DNS query by checking the cache first and then looking up the record for the domain.
         """
         try:
-            transaction_id, domain_name, qtype, qclass = parse_dns_query(query)
+            transaction_id, domain_name, qtype, _ = parse_dns_query(query)
             if not domain_name:
-                return self.build_error_response(query, rcode=3)  # Invalid domain name
+                return build_error_response(query, rcode=3)  # Invalid domain name
 
             # Convert qtype from numeric to string representation
             qtype_str = self.query_type_to_string(qtype)
             
             # If query type is not supported (like AAAA/28), return a "Not Implemented" response
             if qtype_str is None or qtype_str not in ['A', 'NS', 'MX', 'SOA', 'PTR', 'TXT', 'CNAME', 'MAILA', 'MAILB']:
-                return self.build_error_response(query, rcode=4)  # Not Implemented
+                return build_error_response(query, rcode=4)  # Not Implemented
 
             if domain_name in self.records:
                 if qtype_str in self.records[domain_name]:
-                    response = self.build_response(query, domain_name, qtype_str)
+                    response = self.build_response(query)
                     self.cache.store(response)
                     return response
                 else:
-                    return self.build_error_response(query, rcode=4)
+                    return build_error_response(query, rcode=4)
             else:
-                return self.build_error_response(query, rcode=3)
+                return build_error_response(query, rcode=3)
 
         except Exception as e:
             logging.error(f"Error handling query: {e}")
-            return self.build_error_response(query, rcode=2)  # Server failure
+            return build_error_response(query, rcode=2)  # Server failure
 
 
-    def build_response(self, query, domain_name, query_type):
+    def build_response(self, query):
         """
-        Builds the DNS response with detailed debugging.
+        Builds the DNS response with detailed debugging for various query types.
         """
         try:
+            # Parse the DNS query
             transaction_id, domain_name, qtype, qclass = parse_dns_query(query)
+            logging.info(f"Query: {query}, domain: {domain_name}, qtype: {qtype}, qclass: {qclass}")
 
-            # Header section
-            flags = 0x8180  # Standard query response (QR=1, AA=0, RCODE=0)
+            # Check if the domain and requested record type exist
+            record_type = self.query_type_to_string(qtype)
+            if not record_type or domain_name not in self.records or record_type not in self.records[domain_name]:
+                return build_error_response(query, rcode=3)  # NXDOMAIN
+
+            # Header Section
+            flags = 0x8180  # Standard query response (QR=1, AA=1, RCODE=0)
             questions = 1
-            answers = len(self.records[domain_name].get(query_type, []))
+            answers = len(self.records[domain_name][record_type])
             authority_rrs = 0
             additional_rrs = 0
+            header = self.build_dns_header(transaction_id, flags, questions, answers, authority_rrs, additional_rrs)
+            logging.debug(f"Header: {header}")
 
-            header = struct.pack("!HHHHHH", 
-                            transaction_id, 
-                            flags, 
-                            questions, 
-                            answers, 
-                            authority_rrs, 
-                            additional_rrs)
+            # Question Section
+            question = b''.join(
+                bytes([len(label)]) + label.encode('ascii') for label in domain_name.split('.')
+            ) + b'\x00'
+            question += struct.pack("!HH", qtype, qclass)
+            logging.debug(f"Question: {question}")
 
-            # Question section
-            question = b''
-            for label in domain_name.split('.'):
-                question += bytes([len(label)]) + label.encode('ascii')
-            question += b'\x00'  # Terminating byte
-            question += struct.pack("!HH", qtype, qclass)  # QTYPE=A(1), QCLASS=IN(1)
-
-
-            # Answer section
+            # Answer Section
             answer = b''
-            if query_type in ["A", "NS", "MX", "CNAME", "PTR", "TXT", "SOA", "MG", "MR", "HINFO", "MINFO", "MAILB", "MAILA"] and domain_name in self.records:
-                for record in self.records[domain_name].get(query_type, []):
-                    answer += b'\xc0\x0c'  # Compression pointer to domain name
-                    answer += struct.pack("!HHI", getattr(self, f"QTYPE_{query_type}"), 1, 3600)  # TYPE, CLASS, TTL
+            domain_offsets = {domain_name: 12}  # Domain offsets for compression pointers
+            current_length = len(header) + len(question)
 
-                    if query_type == "A":
-                        answer += struct.pack("!H", 4)  # RDLENGTH
-                        answer += struct.pack("!4B", *map(int, record.split('.')))
-                    elif query_type == "TXT":
-                        answer += struct.pack("!H", len(record) + 1)  # RDLENGTH
-                        answer += struct.pack("!B", len(record)) + record.encode('ascii')
-                    elif query_type in ["CNAME", "NS", "PTR"]:
-                        answer += struct.pack("!H", len(record) + 1)  # RDLENGTH
-                        for label in record.split('.'):  # Encode domain name
-                            answer += bytes([len(label)]) + label.encode('ascii')
-                        answer += b'\x00'
-                    elif query_type in ["HINFO"]:
-                        cpu, os = record
-                        answer += struct.pack("!H", len(cpu) + len(os) + 2)
-                        answer += struct.pack("!B", len(cpu)) + cpu.encode('ascii')
-                        answer += struct.pack("!B", len(os)) + os.encode('ascii')
-                    elif query_type in ["MG", "MR", "MAILB", "MAILA"]: #cacheee
-                        answer += struct.pack("!H", len(record) + 1)
-                        answer += struct.pack("!B", len(record)) + record.encode('ascii')
-                    elif query_type == "MINFO":
-                        rmailbx, emailbx = record
-                        answer += struct.pack("!H", len(rmailbx) + len(emailbx) + 2)
-                        answer += struct.pack("!B", len(rmailbx)) + rmailbx.encode('ascii')
-                        answer += struct.pack("!B", len(emailbx)) + emailbx.encode('ascii')
-                    elif query_type == "NULL":
-                        answer += struct.pack("!H", 0)  # RDLENGTH is 0
-                    elif query_type == "WKS": # Not support asln
-                        answer += struct.pack("!H", len(record) + 1)
-                        answer += struct.pack("!B", len(record)) + record.encode('ascii')
+            for record in self.records[domain_name][record_type]:
+                compressed_name, current_length = self.encode_domain_name_with_compression(domain_name, domain_offsets, current_length)
+                answer += compressed_name
 
-            # Full response
+                if record_type == "A":
+                    # IPv4 address
+                    answer += struct.pack("!HHI", QTYPE_A, qclass, 3600)  # TYPE, CLASS, TTL
+                    answer += struct.pack("!H", 4)  # RDLENGTH
+                    answer += bytes(map(int, record.split('.')))  # RDATA (IPv4 address)
+
+                elif record_type == "MX":
+                    # Mail exchange record
+                    priority, mail_server = record.split(' ', 1)
+                    rdata, current_length = self.encode_domain_name_with_compression(mail_server, domain_offsets, current_length)
+                    rdata = struct.pack("!H", int(priority)) + rdata.rstrip(b'\x00')  # Remove extra null byte
+                    answer += struct.pack("!HHIH", QTYPE_MX, qclass, 3600, len(rdata)) + rdata
+
+                elif record_type == "NS":
+                    # Name server
+                    rdata, current_length = self.encode_domain_name_with_compression(record, domain_offsets, current_length)
+                    answer += struct.pack("!HHIH", QTYPE_NS, qclass, 3600, len(rdata)) + rdata
+
+                elif record_type == "CNAME":
+                    # Canonical name
+                    rdata, current_length = self.encode_domain_name_with_compression(record, domain_offsets, current_length)
+                    answer += struct.pack("!HHIH", QTYPE_CNAME, qclass, 3600, len(rdata)) + rdata
+
+                elif record_type == "SOA":
+                    # Split the SOA record into components
+                    primary_ns, admin_email, serial, refresh, retry, expire, min_ttl = record.split(' ')
+                    primary_ns_rdata, current_length = self.encode_domain_name_with_compression(primary_ns, domain_offsets, current_length)
+                    admin_email_rdata, current_length = self.encode_domain_name_with_compression(admin_email, domain_offsets, current_length)
+                    rdata = primary_ns_rdata + admin_email_rdata
+                    rdata += struct.pack("!IIIII", int(serial), int(refresh), int(retry), int(expire), int(min_ttl))
+                    answer += struct.pack("!HHIH", QTYPE_SOA, qclass, 3600, len(rdata)) + rdata
+
+                elif record_type == "PTR":
+                    # Pointer (reverse DNS)
+                    rdata, current_length = self.encode_domain_name_with_compression(record, domain_offsets, current_length)
+                    answer += struct.pack("!HHIH", QTYPE_PTR, qclass, 3600, len(rdata)) + rdata
+
+                elif record_type == "TXT":
+                    # Text record
+                    rdata = bytes([len(record)]) + record.encode('ascii')
+                    answer += struct.pack("!HHIH", QTYPE_TXT, qclass, 3600, len(rdata)) + rdata
+
+            # Full Response
             response = header + question + answer
+            logging.debug(f"answer is {answer}")
+            logging.debug(f"Header size: {len(header)}, Question size: {len(question)}, Answer size: {len(answer)}, Total: {len(response)}")
+            logging.info(f"Response built: {response}")
             return response
+
         except Exception as e:
             logging.error(f"Error building DNS response: {e}")
-            return None
-
-        #     # Answer section
+            return build_error_response(query, rcode=2)  # Server failure
 
 
-        #     answer = b''
-        #     if query_type == "A" and domain_name in self.records:
-        #         for ip_address in self.records[domain_name][query_type]:
-        #             answer += b'\xc0\x0c'  # Compression pointer to domain name
-        #             answer += struct.pack("!HH", 
-        #                             1,    # TYPE A
-        #                             1)    # CLASS IN
-        #             answer += struct.pack("!I", 3600)  # TTL
-        #             answer += struct.pack("!H", 4)     # RDLENGTH (4 for IPv4)
-        #             ip_parts = [int(part) for part in ip_address.split('.')]
-        #             answer += bytes(ip_parts)          # RDATA (IP address
 
+    # def pack_domain_name(self, domain):
+    #     """
+    #     Packs a domain name into DNS wire format.
+    #     """
+    #     result = b''
+    #     for label in domain.split('.'):
+    #         if label:  # Skip empty labels
+    #             length = len(label)
+    #             result += struct.pack('!B', length) + label.encode()
+    #     return result + b'\x00'  # Terminate with null byte
 
-        #     elif query_type == "MX" and domain_name in self.records:
-        #         for mail_server, priority in self.records[domain_name][query_type]:
-        #             fixed_fields = struct.pack("!HHIH", 
-        #                                     15,     # TYPE: MX
-        #                                     1,      # CLASS: IN
-        #                                     3600,   # TTL
-        #                                     len(mail_server) + 2)  # RDLENGTH: len(mail_server) + 2 bytes for priority
-        #             answer += fixed_fields
-                    
-        #             # Priority field (2 bytes)
-        #             answer += struct.pack("!H", priority)
-                    
-        #             # Mail server field (string, encoded)
-        #             answer += bytes([len(mail_server)]) + mail_server.encode('ascii')
-
-        #     elif query_type == "NS" and domain_name in self.records:
-        #         for ns_server in self.records[domain_name][query_type]:
-        #             fixed_fields = struct.pack("!HHIH", 
-        #                                     2,      # TYPE: NS
-        #                                     1,      # CLASS: IN
-        #                                     3600,   # TTL
-        #                                     len(ns_server) + 2)  # RDLENGTH: length of NS server
-        #             answer += fixed_fields
-                    
-        #             # NS record (server name)
-        #             answer += bytes([len(ns_server)]) + ns_server.encode('ascii')
-
-        #     elif query_type == "CNAME" and domain_name in self.records:
-        #         for cname in self.records[domain_name][query_type]:
-        #             fixed_fields = struct.pack("!HHIH", 
-        #                                     5,      # TYPE: CNAME
-        #                                     1,      # CLASS: IN
-        #                                     3600,   # TTL
-        #                                     len(cname) + 1)  # RDLENGTH: length of CNAME
-        #             answer += fixed_fields
-                    
-        #             # CNAME record (canonical name)
-        #             answer += bytes([len(cname)]) + cname.encode('ascii')
-
-        #     elif query_type == "SOA" and domain_name in self.records:
-        #         # SOA record fields: primary NS, hostmaster, serial, refresh, retry, expire, minimum TTL
-        #         soa_fields = self.records[domain_name][query_type]
-        #         fixed_fields = struct.pack("!HHIH", 
-        #                                     6,      # TYPE: SOA
-        #                                     1,      # CLASS: IN
-        #                                     3600,   # TTL
-        #                                     20)     # RDLENGTH: sum of the field lengths
-        #         answer += fixed_fields
-
-        #         # SOA record fields (in order)
-        #         for field in soa_fields:
-        #             if isinstance(field, int):
-        #                 answer += struct.pack("!I", field)  # Integer values (serial, refresh, retry, expire, etc.)
-        #             else:
-        #                 answer += bytes([len(field)]) + field.encode('ascii')  # String fields (NS, hostmaster)
-
-        #     elif query_type == "PTR" and domain_name in self.records:
-        #         for ptr_record in self.records[domain_name][query_type]:
-        #             fixed_fields = struct.pack("!HHIH", 
-        #                                     12,     # TYPE: PTR
-        #                                     1,      # CLASS: IN
-        #                                     3600,   # TTL
-        #                                     len(ptr_record) + 1)  # RDLENGTH: length of PTR record
-        #             answer += fixed_fields
-                    
-        #             # PTR record (reverse DNS)
-        #             answer += bytes([len(ptr_record)]) + ptr_record.encode('ascii')
-
-        #     # Full response
-        #     # logging.info(f"header is {header}, question is {question}, answer is {answer}")
-        #     response = header + question + answer
-        #     return response
-
-        # except Exception as e:
-        #     logging.error(f"Error building DNS response: {e}")
-        #     return None
-
-    def pack_domain_name(self, domain):
-        """
-        Packs a domain name into DNS wire format.
-        """
-        result = b''
-        for label in domain.split('.'):
-            if label:  # Skip empty labels
-                length = len(label)
-                result += struct.pack('!B', length) + label.encode()
-        return result + b'\x00'  # Terminate with null byte
-
-    def build_record(self, record, query_type):
-        """
-        Builds a DNS record with proper formatting.
-        """
-        if query_type == "A":
-            # Properly format A record
-            ip_parts = [int(x) for x in record.split(".")]
-            return struct.pack("!HHIH4B", 0xC00C, 1, 1, 3600, *ip_parts)
+    # def build_record(self, record, query_type):
+    #     """
+    #     Builds a DNS record with proper formatting.
+    #     """
+    #     if query_type == "A":
+    #         # Properly format A record
+    #         ip_parts = [int(x) for x in record.split(".")]
+    #         return struct.pack("!HHIH4B", 0xC00C, 1, 1, 3600, *ip_parts)
     
 
-    def parse_domain_name(self, query):
-        """
-        Extracts the domain name from the DNS query.
-        """
-        try:
-            domain_name = ""
-            i = 12  # Start after the header
-            length = query[i]  # First length byte
+    # def parse_domain_name(self, query):
+    #     """
+    #     Extracts the domain name from the DNS query.
+    #     """
+    #     try:
+    #         domain_name = ""
+    #         i = 12  # Start after the header
+    #         length = query[i]  # First length byte
 
-            while length != 0:
-                if i + length + 1 > len(query):  # Ensure bounds
-                    raise ValueError("Query length exceeds the buffer size while parsing the domain name.")
+    #         while length != 0:
+    #             if i + length + 1 > len(query):  # Ensure bounds
+    #                 raise ValueError("Query length exceeds the buffer size while parsing the domain name.")
 
-                domain_name += query[i + 1: i + 1 + length].decode() + "."
-                i += length + 1
-                length = query[i]  # Get the next length byte
+    #             domain_name += query[i + 1: i + 1 + length].decode() + "."
+    #             i += length + 1
+    #             length = query[i]  # Get the next length byte
 
-            return domain_name[:-1]  # Remove trailing dot
-        except (IndexError, ValueError) as e:
-            logging.error(f"Failed to parse domain name from query: {e}")
-            return None
+    #         return domain_name[:-1]  # Remove trailing dot
+    #     except (IndexError, ValueError) as e:
+    #         logging.error(f"Failed to parse domain name from query: {e}")
+    #         return None
 
-    def parse_query_type(self, query):
-        """
-        Extracts the query type from the DNS query and maps it to its string equivalent.
-        """
-        if len(query) < 4:
-            logging.error("Query too short to extract query type")
-            return None
+    # def parse_query_type(self, query):
+    #     """
+    #     Extracts the query type from the DNS query and maps it to its string equivalent.
+    #     """
+    #     if len(query) < 4:
+    #         logging.error("Query too short to extract query type")
+    #         return None
 
-        # Extract the query type (last 4-2 bytes for qtype)
-        query_type_num = struct.unpack("!H", query[-4:-2])[0]
-        # logging.debug(f"Extracted numeric query type: {query_type_num}")
+    #     # Extract the query type (last 4-2 bytes for qtype)
+    #     query_type_num = struct.unpack("!H", query[-4:-2])[0]
+    #     # logging.debug(f"Extracted numeric query type: {query_type_num}")
 
-        # Map numeric query type to its string representation
-        query_type_map = {
-            1: "A",
-            2: "NS",
-            5: "CNAME",
-            6: "SOA",
-            12: "PTR",
-            15: "MX",
-            16: "TXT",
-            33: "SRV",
-        }
+    #     # Map numeric query type to its string representation
+    #     query_type_map = {
+    #         1: "A",
+    #         2: "NS",
+    #         5: "CNAME",
+    #         6: "SOA",
+    #         12: "PTR",
+    #         15: "MX",
+    #         16: "TXT",
+    #         33: "SRV",
+    #     }
 
-        # Log if the query type is unmapped
-        if query_type_num not in query_type_map:
-            logging.error(f"Unmapped query type: {query_type_num}")
-        return query_type_map.get(query_type_num, None)
+    #     # Log if the query type is unmapped
+    #     if query_type_num not in query_type_map:
+    #         logging.error(f"Unmapped query type: {query_type_num}")
+    #     return query_type_map.get(query_type_num, None)
 
     def build_dns_header(self, transaction_id, flags, qd_count, an_count, ns_count, ar_count):
         """
@@ -454,6 +383,42 @@ class AuthoritativeServer:
         }
         return type_map.get(qtype, None)
     
+    def encode_domain_name_with_compression(self, domain_name, domain_offsets, current_length):
+        """
+        Encodes a domain name, using compression pointers where possible.
+
+        Parameters:
+        - domain_name (str): The domain name to encode.
+        - domain_offsets (dict): A dictionary mapping domain names to their positions.
+        - current_length (int): The current length of the message.
+
+        Returns:
+        - bytes: The encoded domain name.
+        - int: The updated current length of the message.
+        """
+        try:
+            logging.debug(f"Encoding domain name: {domain_name}")
+            logging.debug(f"Current domain offsets: {domain_offsets}")
+            logging.debug(f"Current message length: {current_length}")
+
+            if domain_name in domain_offsets:
+                # Use a compression pointer if the domain was already encoded
+                pointer = domain_offsets[domain_name]
+                logging.debug(f"Domain name '{domain_name}' already encoded at offset {pointer}. Using compression pointer.")
+                compressed_pointer = struct.pack("!H", 0xC000 | pointer)
+                logging.debug(f"Compressed pointer: {compressed_pointer}")
+                return compressed_pointer, current_length
+            else:
+                # Encode the domain name fully and store its position
+                encoded_name = b''.join(
+                    bytes([len(label)]) + label.encode('ascii') for label in domain_name.split('.')
+                ) + b'\x00'  # Null byte added for termination
+                logging.debug(f"Encoded domain name before storing: {encoded_name}")
+                domain_offsets[domain_name] = current_length
+                return encoded_name, current_length + len(encoded_name)
+        except Exception as e:
+            logging.error(f"Error encoding domain name '{domain_name}': {e}")
+            raise            
     def build_question_section(self, domain_name, query_type):
         """
         Builds the DNS question section for the query.
@@ -474,17 +439,25 @@ class AuthoritativeServer:
         #master file
 
     def save_master_files(self, output_dir="master_files"):
-        """
-        Saves the current DNS records into JSON master files.
-        """
-        import os
         os.makedirs(output_dir, exist_ok=True)
-        
         for domain, records in self.records.items():
-            file_name = f"{output_dir}/{domain.replace('.', '_')}.json"
+            file_name = f"{output_dir}/{domain.replace('.', '_')}.zone"
             try:
                 with open(file_name, 'w') as file:
-                    json.dump({"domain": domain, "records": records}, file, indent=4)
+                    file.write(f"$ORIGIN {domain}.\n$TTL 3600\n")
+                    for rtype, rdata_list in records.items():
+                        for rdata in rdata_list:
+                            if rtype == "SOA":
+                                primary_ns, admin_email, serial, refresh, retry, expire, min_ttl = rdata.split(' ')
+                                file.write(f"{domain} IN SOA {primary_ns} {admin_email} {serial} {refresh} {retry} {expire} {min_ttl}\n")
+                            elif rtype == "MX":
+                                priority, mail_server = rdata.split(' ', 1)
+                                file.write(f"{domain} IN MX {priority} {mail_server}\n")
+                            else:
+                                file.write(f"{domain} IN {rtype} {rdata}\n")
                 logging.info(f"Master file saved: {file_name}")
             except Exception as e:
                 logging.error(f"Failed to save master file {file_name}: {e}")
+                
+
+

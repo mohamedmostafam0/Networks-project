@@ -59,7 +59,7 @@ def resolve_query(query, authoritative_cache, resolver_cache, root_server: RootS
             logging.error(f"TLD server could not resolve domain: {domain_name}")
             return build_error_response(query, rcode=3)  # NXDOMAIN
 
-        logging.info(f"returning referral to tld server {tld_server_ip}")
+        logging.info(f"returning referral to tld server at {tld_server_ip}")
     
         # Query Authoritative Server
         cache_key = (domain_name, qtype, qclass)
@@ -75,8 +75,9 @@ def resolve_query(query, authoritative_cache, resolver_cache, root_server: RootS
 
         # logging.info(f"your tld response is {tld_response}")
         authoritative_server_ip = extract_referred_ip(tld_response)
-        # logging.debug(f"Referred authoritative server IP: {authoritative_server_ip}")
+        logging.debug(f"Referred authoritative server IP: {authoritative_server_ip}")
         authoritative_response = authoritative_server.handle_name_query(tld_response)
+        logging.info(f"Authoritative response is {authoritative_response}")
         if not authoritative_response:
             logging.error(f"Authoritative server could not resolve domain: {domain_name}")
             return build_error_response(query, rcode=3)  # NXDOMAIN

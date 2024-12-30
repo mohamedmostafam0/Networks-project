@@ -5,10 +5,7 @@ from utils import (
     build_dns_question,
     build_rr,
     parse_dns_query,
-    validate_query,
-    build_error_response,
     ip_to_bytes,
-    bytes_to_ip,
     format_ns_name,
 )
 

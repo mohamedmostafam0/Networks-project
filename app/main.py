@@ -1,4 +1,3 @@
-import socket
 import threading
 import logging
 from resolver import resolve_query
@@ -13,6 +12,8 @@ from queue import Queue
 from utils import build_dns_query, parse_dns_query, build_error_response
 import tkinter as tk
 from tkinter import messagebox
+
+
 # Setup logging
 logging.basicConfig(level=logging.DEBUG)
 # DNS server configuration
@@ -222,9 +223,14 @@ def main():
                 # start_gui(cache, authoritative_server, tld_server, root_server)
             else:
                 print("Invalid choice. Exiting.")
+        
         except KeyboardInterrupt:
             print("\nShutting down the DNS Server. Goodbye!")
             logging.info("Shutting down DNS server...")
+            
+            # Save master files on shutdown
+            authoritative_server.save_master_files()            
+            
             # Close resources
             udp_transport.close()
             tcp_transport.close()

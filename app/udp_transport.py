@@ -2,7 +2,7 @@ import socket
 import threading
 from utils import parse_dns_query
 import logging
-
+from authoritative import AuthoritativeServer
 class UDPTransport:
     """
     Handles UDP communication for DNS queries.
@@ -62,4 +62,5 @@ class UDPTransport:
         """
         if self.server:
             self.server.close()
+            AuthoritativeServer.save_master_files()            
             logging.info("UDP transport closed")

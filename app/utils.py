@@ -212,31 +212,50 @@ def validate_query(query):
 
     return transaction_id, domain_name, qtype, qclass
 
+# def build_error_response(query, rcode):
+#     """
+#     Constructs a DNS response with an error.
+#     """
+#     try:
+#         transaction_id = struct.unpack("!H", query[:2])[0]
+        
+#         # For IPv6 queries, set specific flags to indicate not implemented
+#         if query[len(query)-3] == 28:  # Check if query type is AAAA
+#             flags = 0x8184  # Response + Not Implemented
+#         else:
+#             flags = 0x8183  # Standard error response
+            
+#         header = struct.pack("!HHHHHH",
+#                            transaction_id,
+#                            flags,
+#                            1,  # One question
+#                            0,  # No answers
+#                            0,  # No authority
+#                            0)  # No additional
+                           
+#         return header + query[12:]  # Original question section
+#     except Exception as e:
+#         logging.error(f"Error building error response: {e}")
+#         return None
+
 def build_error_response(query, rcode):
     """
-    Constructs a DNS response with an error.
+    Constructs a DNS response with an error (e.g., NXDOMAIN).
     """
     try:
-        transaction_id = struct.unpack("!H", query[:2])[0]
-        
-        # For IPv6 queries, set specific flags to indicate not implemented
-        if query[len(query)-3] == 28:  # Check if query type is AAAA
-            flags = 0x8184  # Response + Not Implemented
-        else:
-            flags = 0x8183  # Standard error response
-            
-        header = struct.pack("!HHHHHH",
-                           transaction_id,
-                           flags,
-                           1,  # One question
-                           0,  # No answers
-                           0,  # No authority
-                           0)  # No additional
-                           
-        return header + query[12:]  # Original question section
-    except Exception as e:
-        logging.error(f"Error building error response: {e}")
-        return None
+        transaction_id, _, _, _ = parse_dns_query(query)
+    except ValueError as e:
+        logging.error(f"Failed to parse query for error response: {e}")
+        return b""  # Return an empty response if query parsing fails
+
+    flags = 0x8180 | rcode  # Standard query response with the provided error code
+    qd_count = 1  # One question
+    an_count = 0  # No answer records
+    ns_count = 0  # No authority records
+    ar_count = 0  # No additional records
+    header = build_dns_header(transaction_id, flags, qd_count, an_count, ns_count, ar_count)
+    question = query[12:]  # Include the original question section
+    return header + question
 
 def extract_referred_ip(response):
     """
