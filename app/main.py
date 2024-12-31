@@ -1,15 +1,17 @@
 import threading
 import logging
-from resolver import resolve_query
+from resolver import Resolver
+from tld_cache import TLDCache
 from name_cache import NameCache
 from resolver_cache import ResolverCache
+from Server import Server
 from authoritative import AuthoritativeServer
 from root import RootServer
 from tld import TLDServer
 from udp_transport import UDPTransport
 from tcp_transport import TCPTransport
 from queue import Queue
-from utils import build_dns_query, parse_dns_query, build_error_response
+from utils import parse_dns_query
 import tkinter as tk
 from tkinter import messagebox
 
@@ -21,70 +23,96 @@ DNS_SERVER_IP = "0.0.0.0"  # Allow access from any device on the local network
 DNS_SERVER_UDP_PORT = 1053
 DNS_SERVER_TCP_PORT = 1053
 
-# Constants for DNS message components
 QTYPE_A = 1       # A host address (IPv4 addresses)
-QTYPE_NS = 2      # An authoritative name server
+QTYPE_NS = 2      
 QTYPE_CNAME = 5   # The canonical name for an alias
 QTYPE_SOA = 6     # Marks the start of a zone of authority
+QTYPE_MB = 7     
+QTYPE_MG = 8     
+QTYPE_MR = 9     
+QTYPE_NULL = 10     
+QTYPE_WKS = 11     
 QTYPE_PTR = 12    # A domain name pointer (reverse DNS)
-QTYPE_MX = 15     # Mail exchange
-QTYPE_TXT = 16    # Text strings (TXT records)
-QTYPE_AXFR = 252  # Request for transfer of a zone
-QTYPE_WKS = 11    # A well-known service description
 QTYPE_HINFO = 13  # Host information
 QTYPE_MINFO = 14  # Mailbox or mail list information
+QTYPE_MX = 15     # Mail exchange
+QTYPE_TXT = 16    # Text strings (TXT records)
+QTYPE_AXFR = 252  
+QTYPE_MAILB = 253  
+QTYPE_MAILA = 254  
 
 QCLASS_IN = 1     # Internet (IN) class
 
 
-def process_queries(queue, authoritative_cache, resolver_cache, root_server, tld_server, authoritative_server):
+def process_queries(queue, server, resolver, tld_cache, authoritative_cache, resolver_cache, root_server, tld_server, authoritative_server):
+    """
+    Continuously processes DNS queries from the queue.
+    """
+    if tld_cache:
+        logging.info("TLD cache initialized.")
     while True:
         query_data = queue.get()
-        if query_data:
-            query_raw = query_data.get('raw_query')
-            if query_raw:
-                try:
-                    transaction_id, domain_name, qtype, qclass = parse_dns_query(query_raw)
-                    
-                    # Handle IPv6 queries
-                    if qtype == 28:
-                        logging.info(f"IPv6 query received for {domain_name}, sending Not Implemented")
-                        response = build_error_response(query_raw, rcode=4)
-                        query_data['respond'](response)
-                        continue
-                        
-                    # Normal processing for other queries
-                    response = resolve_query(
-                        query_raw,
-                        authoritative_cache,
-                        resolver_cache,
-                        root_server,
-                        tld_server,
-                        authoritative_server,
-                        recursive=True,
-                        is_tcp=False
-                    )
-                    if response:
-                        query_data['respond'](response)
-                        
-                except Exception as e:
-                    logging.error(f"Error processing query: {e}")
+        if not query_data:
+            continue  # Skip if the queue has invalid data
+        
+        query_raw = query_data.get('raw_query')
+        if not query_raw:
+            logging.warning("Received empty raw query data.")
+            continue
+
+        try:
+            # Parse the DNS query
+            _, domain_name, _, _ = parse_dns_query(query_raw)
+
+            # Validate the query format
+            try:
+                transaction_id, domain_name, qtype, qclass = server.validate_query(query_raw)
+            except ValueError as e:
+                logging.error(f"Invalid query: {e}")
+                return server.build_error_response(query_raw, rcode=1)  # Format error (RCODE 1)
+
+            # Resolve the query
+            response = resolver.resolve_query(
+                query_raw,
+                tld_cache, 
+                authoritative_cache,
+                resolver_cache,
+                root_server,
+                tld_server,
+                authoritative_server,
+                recursive=True,
+                is_tcp=False,
+            )
+
+            # Send the response if valid
+            if response:
+                query_data['respond'](response)
+            else:
+                logging.warning(f"No response generated for query: {domain_name}")
+
+        except ValueError as ve:
+            logging.error(f"ValueError while processing query: {ve}")
+        except Exception as e:
+            logging.error(f"Unexpected error while processing query: {e}")
+
 
 def start_dns_server():
     """
     Starts the DNS server that listens for queries over UDP and TCP.
     """
     # Initialize components
+    tld_cache = TLDCache(redis_host="localhost", redis_port=6381)
     authoritative_cache = NameCache(redis_host="localhost", redis_port=6380)  # Authoritative server cache
     resolver_cache = ResolverCache(redis_host="localhost", redis_port=6379)  # Resolver cache
-    if(authoritative_cache is None or resolver_cache is None):
+    if(authoritative_cache is None or resolver_cache is None or tld_cache is None):
         logging.error("Failed to initialize caches")
+    resolver = Resolver()
+    server = Server()
     authoritative_server = AuthoritativeServer(authoritative_cache)  # Handle authoritative queries    root_server = RootServer()  # Initialize RootServer
     root_server = RootServer()  # Initialize RootServer
-    tld_server = TLDServer()    # Initialize TLDServer
+    tld_server = TLDServer(tld_cache)    # Initialize TLDServer
     
     query_queue = Queue()
-
     # Start UDP transport
     udp_transport = UDPTransport(DNS_SERVER_UDP_PORT, query_queue)
     udp_transport.listen()
@@ -96,7 +124,11 @@ def start_dns_server():
     logging.info(f"DNS server is running on {DNS_SERVER_IP}:{DNS_SERVER_UDP_PORT} for UDP...")
     logging.info(f"DNS server is running on {DNS_SERVER_IP}:{DNS_SERVER_TCP_PORT} for TCP...")
 
-    udp_thread = threading.Thread(target=process_queries, args=(query_queue, authoritative_cache, resolver_cache, root_server, tld_server, authoritative_server))
+        # Start periodic saving of master files
+    save_thread = threading.Thread(target=authoritative_server.periodic_save, args=(authoritative_server,), daemon=True)
+    save_thread.start()
+
+    udp_thread = threading.Thread(target=process_queries, args=(query_queue, server, resolver, tld_cache, authoritative_cache, resolver_cache, root_server, tld_server, authoritative_server))
     udp_thread.start()
 
     return authoritative_cache, resolver_cache, authoritative_server, tld_server, root_server, udp_transport, tcp_transport, udp_thread

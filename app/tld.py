@@ -1,20 +1,18 @@
 import struct
 import logging
 from utils import (
-    build_dns_header,
-    build_dns_question,
-    build_rr,
     parse_dns_query,
-    ip_to_bytes,
     format_ns_name,
 )
+from Server import Server   
+from tld_cache import TLDCache
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 
 
-class TLDServer:
-    def __init__(self):
+class TLDServer(Server):
+    def __init__(self, cache: TLDCache):
         """
         Initializes the TLD server with a mapping of second-level domains to
         authoritative server addresses.
@@ -29,6 +27,7 @@ class TLDServer:
             "techstartup.io": "192.168.2.16",
             "innovators.tech": "192.168.2.17",
         }
+        self.cache = cache
         self.ttl = 3600  # Default TTL for records
 
     def handle_tld_query(self, query):
@@ -36,13 +35,18 @@ class TLDServer:
             Handles DNS queries by referring them to the correct authoritative server.
             """
             try:
-                transaction_id, domain_name, qtype, qclass = parse_dns_query(query)
+                _, domain_name, _, _ = parse_dns_query(query)
                 domain_name = domain_name.lower()  # Ensure case-insensitivity
                 print("Your query is for: " + domain_name)
             except ValueError as e:
                 logging.error(f"Invalid query: {e}")
                 print("Building error response")
                 return self.build_error_response(query, rcode=1)  # Format error (RCODE 1)
+            
+            cached_response = self.cache.get(domain_name)
+            if cached_response:
+                logging.info(f"Cache hit for {domain_name}.")
+                return cached_response
 
             # Find the authoritative server for the domain
             authoritative_server_address = self.find_authoritative_server(domain_name)
@@ -50,7 +54,9 @@ class TLDServer:
                 logging.info(
                     f"Referring query for {domain_name} to authoritative server at {authoritative_server_address}"
                 )
-                return self.build_referral_response(query, domain_name, authoritative_server_address)
+                response = self.build_referral_response(query, domain_name, authoritative_server_address)
+                self.cache.store(domain_name, response)
+                return response
 
             # If no authoritative server is found, return an error response
             print(f"No authoritative server found for {domain_name}")
@@ -82,13 +88,13 @@ class TLDServer:
         an_count = 0  # No answer records
         ns_count = 1  # One authority record
         ar_count = 1  # One additional record
-        header = build_dns_header(transaction_id, flags, qd_count, an_count, ns_count, ar_count)
+        header = self.build_dns_header(transaction_id, flags, qd_count, an_count, ns_count, ar_count)
 
         # Question Section
-        question = build_dns_question(domain_name, qtype, qclass)
+        question = self.build_question_section(domain_name, qtype, qclass)
 
         # Authority Section (NS record)
-        authority_rr = build_rr(
+        authority_rr = self.build_rr(
             name=domain_name,
             rtype=2,  # NS record
             rclass=1,  # IN class
@@ -97,31 +103,13 @@ class TLDServer:
         )
 
         # Additional Section (A record for next server)
-        additional_rr = build_rr(
+        additional_rr = self.build_rr(
             name="ns1.authoritative-server.com",
             rtype=1,  # A record
             rclass=1,  # IN class
             ttl=self.ttl,  # Time-to-live
-            rdata=ip_to_bytes(next_server_ip),
+            rdata= self.ip_to_bytes(next_server_ip),
         )
 
         return header + question + authority_rr + additional_rr
 
-    def build_error_response(self, query, rcode):
-        """
-        Constructs a DNS response with an error (e.g., NXDOMAIN).
-        """
-        try:
-            transaction_id, _, _, _ = parse_dns_query(query)
-        except ValueError as e:
-            logging.error(f"Failed to parse query for error response: {e}")
-            return b""  # Return an empty response if query parsing fails
-
-        flags = 0x8180 | rcode  # Standard query response with the provided error code
-        qd_count = 1  # One question
-        an_count = 0  # No answer records
-        ns_count = 0  # No authority records
-        ar_count = 0  # No additional records
-        header = build_dns_header(transaction_id, flags, qd_count, an_count, ns_count, ar_count)
-        question = query[12:]  # Include the original question section
-        return header + question

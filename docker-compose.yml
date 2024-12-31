@@ -4,7 +4,7 @@ services:
       container_name: "redis-server-1"
       ports:
         - "6379:6379"
-      command: redis-server --databases 2  # Configures Redis to use 2 databases
+      command: redis-server --databases 3  # Configures Redis to use 2 databases
       restart: always
 
   redis2:
@@ -12,9 +12,17 @@ services:
       container_name: "redis-server-2"
       ports:
         - "6380:6379"  # Maps to a different port for the second Redis instance
-      command: redis-server --databases 2  # Configures Redis to use 2 databases
+      command: redis-server --databases 3  # Configures Redis to use 2 databases
       restart: always
-      
+
+  redis3:
+      image: "redis:latest"
+      container_name: "redis-server-3"
+      ports:
+        - "6381:6379"  # Maps to a different port for the second Redis instance
+      command: redis-server --databases 3  # Configures Redis to use 2 databases
+      restart: always
+
   python-dns:
     build: .
     container_name: "python-dns-resolver"

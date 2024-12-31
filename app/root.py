@@ -1,21 +1,16 @@
 import tldextract
 import logging
+from Server import Server
+import struct
 from utils import (
-    build_dns_header,
-    build_dns_question,
-    build_rr,
     parse_dns_query,
-    validate_query,
-    build_error_response,
-    ip_to_bytes,
-    bytes_to_ip,
     format_ns_name
 )
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 
-class RootServer:
+class RootServer(Server):
     def __init__(self):
         # Mapping of TLDs to TLD server addresses (expanded with more dummy data)
         self.tld_mapping = {
@@ -108,7 +103,7 @@ class RootServer:
         if tld in self.tld_mapping:
             tld_server_address = self.tld_mapping[tld]
             logging.info(f"Referring query for {domain_name} to TLD server at {tld_server_address}")
-            return self.build_referral_response(query, domain_name, tld, tld_server_address)
+            return self.build_referral_response(query, tld, tld_server_address)
         
         logging.error(f"TLD {tld} not found in root server mapping.")
         return self.build_error_response(query, rcode=3)  # NXDOMAIN
@@ -137,8 +132,7 @@ class RootServer:
         extracted = tldextract.extract(domain_name)
         return extracted.suffix  # Returns the full TLD (e.g., "com", "co.uk")
     
-    @staticmethod
-    def build_referral_response(query, ns_domain, tld, ns_address):
+    def build_referral_response(self, query, tld, ns_address):
         """
         Constructs a referral response pointing to a name server.
 
@@ -151,59 +145,45 @@ class RootServer:
         Returns:
             bytes: The DNS referral response.
         """
-        # Parse the query to extract necessary details
         transaction_id, domain_name, qtype, qclass = parse_dns_query(query)
-        
+
         # DNS Header
         flags = 0x8180  # Standard query response (QR=1, AA=0, RCODE=0)
-        qd_count = 1  # Number of questions
-        an_count = 0  # Number of answers
-        ns_count = 1  # Number of authority records
-        ar_count = 1  # Number of additional records
-        
+        qd_count = 1
+        an_count = 0
+        ns_count = 1
+        ar_count = 1
+
         # Build the DNS header
-        header = build_dns_header(transaction_id, flags, qd_count, an_count, ns_count, ar_count)
-        
+        header = self.build_dns_header(transaction_id, flags, qd_count, an_count, ns_count, ar_count)
+
         # Question Section
-        question = build_dns_question(domain_name, qtype, qclass)
-        
+        question = self.build_question_section(domain_name, qtype, qclass)
+
         # Authority Section (NS Record)
-        ns_record = build_rr(
+        ns_record = self.build_rr(
             name=tld,  # Referring the TLD (e.g., "com")
             rtype=2,  # NS record
             rclass=1,  # IN class
             ttl=3600,  # TTL in seconds
-            rdata=format_ns_name(ns_domain)  # Name of the NS server (e.g., "a.gtld-servers.net.")
+            rdata=format_ns_name(domain_name)
         )
-        
+
         # Additional Section (A Record for the Name Server)
-        additional_record = build_rr(
-            name=ns_domain,  # Name of the NS server (e.g., "a.gtld-servers.net")
-            rtype=1,  # A record
-            rclass=1,  # IN class
-            ttl=3600,  # TTL in seconds
-            rdata=ip_to_bytes(ns_address)  # Convert the IP address to bytes (e.g., "192.168.1.1" -> b'\xc0\xa8\x01\x01')
+        additional_record = self.build_rr(
+            name=domain_name,
+            rtype=1,
+            rclass=1,
+            ttl=3600,
+            rdata= self.ip_to_bytes(ns_address)
         )
-        # Return the constructed DNS response
+
         return header + question + ns_record + additional_record
 
 
-    @staticmethod
-    def build_error_response(query, rcode):
+    def build_ds_section(self, ds_record):
         """
-        Constructs a DNS response with an error (e.g., NXDOMAIN).
+        Builds the DS record section for a response.
         """
-        transaction_id, domain_name, qtype, qclass = parse_dns_query(query)
+        return struct.pack("!H", len(ds_record)) + ds_record.encode()
 
-        # DNS Header
-        flags = 0x8180 | rcode  # Standard query response with error code
-        qd_count = 1  # One question
-        an_count = 0  # No answer records
-        ns_count = 0  # No authority records
-        ar_count = 0  # No additional records
-        header = build_dns_header(transaction_id, flags, qd_count, an_count, ns_count, ar_count)
-
-        # Question Section (copy from query)
-        question = build_dns_question(domain_name, qtype, qclass)
-
-        return header + question

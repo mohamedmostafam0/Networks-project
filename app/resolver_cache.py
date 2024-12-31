@@ -1,10 +1,4 @@
 import redis
-import time
-import pickle
-from typing import Optional
-import hashlib
-import logging
-from utils import parse_question_section, parse_dns_query
 from BaseCache import BaseCache
 
 class ResolverCache(BaseCache):
@@ -13,5 +7,5 @@ class ResolverCache(BaseCache):
         Initializes the Redis cache connection.
         """
         self.client = redis.StrictRedis(host=redis_host, port=redis_port, db=db, decode_responses=False)
-        print("Cache connection initialized")
+        print("Resolver Cache connection initialized")
 

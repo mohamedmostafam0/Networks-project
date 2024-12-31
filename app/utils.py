@@ -2,29 +2,9 @@ import struct
 import socket
 import random
 import logging
+import threading
+import time
 
-# Constants for DNS message components
-QTYPE_A = 1       # A host address (IPv4 addresses)
-QTYPE_NS = 2      
-QTYPE_MD = 3      
-QTYPE_MF = 4      
-QTYPE_CNAME = 5   # The canonical name for an alias
-QTYPE_SOA = 6     # Marks the start of a zone of authority
-QTYPE_MB = 7     
-QTYPE_MG = 8     
-QTYPE_MR = 9     
-QTYPE_MR = 10     
-QTYPE_WKS = 11     
-QTYPE_PTR = 12    # A domain name pointer (reverse DNS)
-QTYPE_HINFO = 13  # Host information
-QTYPE_MINFO = 14  # Mailbox or mail list information
-QTYPE_MX = 15     # Mail exchange
-QTYPE_TXT = 16    # Text strings (TXT records)
-QTYPE_AXFR = 252  
-QTYPE_MAILB = 253  
-QTYPE_MAILA = 254  
-
-QCLASS_IN = 1     # Internet (IN) class
 
 def send_dns_query(server, query, is_tcp):
     """
@@ -52,72 +32,29 @@ def send_dns_query(server, query, is_tcp):
         return server.handle_name_query(response)
     return None
 
-def build_dns_header(transaction_id, flags, qd_count, an_count, ns_count, ar_count):
-    """
-    Builds the DNS header.
-    """
-    return struct.pack("!HHHHHH", transaction_id, flags, qd_count, an_count, ns_count, ar_count)
 
-def build_dns_question(domain_name, qtype, qclass=QCLASS_IN):
-    """
-    Builds the DNS question section.
-    """
-    question = b""
-    for part in domain_name.split("."):
-        question += struct.pack("!B", len(part)) + part.encode()
-    question += b"\x00"  # End of domain name
-    question += struct.pack("!HH", qtype, qclass)  # QTYPE and QCLASS
-    return question
 
-def build_dns_query(domain_name, qtype, qclass=QCLASS_IN):
-    """
-    Constructs the full DNS query message, including the header and question sections.
-    """
+# def build_rr(name, rtype, rclass, ttl, rdata):
+#     """
+#     Builds a resource record.
     
-    if qclass != QCLASS_IN:
-        raise ValueError("Invalid QCLASS. Only QCLASS_IN (1) is supported.")
-
-    # Generate a random transaction ID
-    transaction_id = random.randint(0, 65535)
-
-    # Flags: Standard query with recursion desired (0x0100)
-    flags = 0x0100
-
-    # Set counts: 1 question, no answers, authorities, or additional records
-    qd_count = 1
-    an_count = 0
-    ns_count = 0
-    ar_count = 0
-
-    # Build the header and question
-    header = build_dns_header(transaction_id, flags, qd_count, an_count, ns_count, ar_count)
-    # question = build_dns_question(domain_name, qtype, qclass)
-    question = build_dns_question(domain_name, qtype, qclass)
-    # Combine header and question to form the full query
-    return header + question
-
-
-def build_rr(name, rtype, rclass, ttl, rdata):
-    """
-    Builds a resource record.
+#     Parameters:
+#         name (str): The domain name for the record.
+#         rtype (int): The type of the record (e.g., 1 for A, 2 for NS).
+#         rclass (int): The class of the record (e.g., 1 for IN).
+#         ttl (int): The time-to-live value for the record.
+#         rdata (bytes): The record data.
     
-    Parameters:
-        name (str): The domain name for the record.
-        rtype (int): The type of the record (e.g., 1 for A, 2 for NS).
-        rclass (int): The class of the record (e.g., 1 for IN).
-        ttl (int): The time-to-live value for the record.
-        rdata (bytes): The record data.
-    
-    Returns:
-        bytes: The resource record.
-    """
-    rr = b""
-    for part in name.split("."):
-        rr += struct.pack("!B", len(part)) + part.encode("utf-8")  # Encode to bytes
-    rr += b"\x00"  # End of domain name
-    rr += struct.pack("!HHI", rtype, rclass, ttl)  # TYPE, CLASS, TTL
-    rr += struct.pack("!H", len(rdata)) + rdata  # RDLENGTH and RDATA
-    return rr
+#     Returns:
+#         bytes: The resource record.
+#     """
+#     rr = b""
+#     for part in name.split("."):
+#         rr += struct.pack("!B", len(part)) + part.encode("utf-8")  # Encode to bytes
+#     rr += b"\x00"  # End of domain name
+#     rr += struct.pack("!HHI", rtype, rclass, ttl)  # TYPE, CLASS, TTL
+#     rr += struct.pack("!H", len(rdata)) + rdata  # RDLENGTH and RDATA
+#     return rr
 
 
 def parse_dns_query(query):
@@ -172,17 +109,6 @@ def parse_dns_query(query):
 
 
 
-def ip_to_bytes(ip_address):
-    """
-    Converts a dotted-quad IPv4 address (e.g., "192.168.1.1") to 4 bytes.
-    """
-    return socket.inet_aton(ip_address)
-
-def bytes_to_ip(ip_bytes):
-    """
-    Converts 4 bytes into a dotted-quad IPv4 address (e.g., "192.168.1.1").
-    """
-    return socket.inet_ntoa(ip_bytes)
 
 def format_ns_name(name):
     """
@@ -193,100 +119,9 @@ def format_ns_name(name):
         formatted_name += struct.pack("!B", len(part)) + part.encode()
     return formatted_name + b"\x00"
 
-def validate_query(query):
-    """
-    Validates a DNS query for compliance with RFC standards.
-    """
-    if len(query) < 12:
-        raise ValueError("Invalid DNS query: Query too short")
 
-    transaction_id, domain_name, qtype, qclass = parse_dns_query(query)
-    if qtype not in [
-        QTYPE_A, QTYPE_NS, QTYPE_MD, QTYPE_MF, QTYPE_CNAME, QTYPE_SOA, QTYPE_MB, QTYPE_MG, QTYPE_MR, QTYPE_WKS, QTYPE_PTR, QTYPE_HINFO, QTYPE_MINFO, QTYPE_MX, QTYPE_TXT, QTYPE_AXFR, QTYPE_MAILB, QTYPE_MAILA]:
-        # Handle unsupported query types
-        print("Unsupported query type")
-        build_error_response(query, rcode=3)
-    # Ensure query type and class are supported
-    if qclass != QCLASS_IN:
-        raise ValueError("Unsupported query class")
 
-    return transaction_id, domain_name, qtype, qclass
 
-# def build_error_response(query, rcode):
-#     """
-#     Constructs a DNS response with an error.
-#     """
-#     try:
-#         transaction_id = struct.unpack("!H", query[:2])[0]
-        
-#         # For IPv6 queries, set specific flags to indicate not implemented
-#         if query[len(query)-3] == 28:  # Check if query type is AAAA
-#             flags = 0x8184  # Response + Not Implemented
-#         else:
-#             flags = 0x8183  # Standard error response
-            
-#         header = struct.pack("!HHHHHH",
-#                            transaction_id,
-#                            flags,
-#                            1,  # One question
-#                            0,  # No answers
-#                            0,  # No authority
-#                            0)  # No additional
-                           
-#         return header + query[12:]  # Original question section
-#     except Exception as e:
-#         logging.error(f"Error building error response: {e}")
-#         return None
-
-def build_error_response(query, rcode):
-    """
-    Constructs a DNS response with an error (e.g., NXDOMAIN).
-    """
-    try:
-        transaction_id, _, _, _ = parse_dns_query(query)
-    except ValueError as e:
-        logging.error(f"Failed to parse query for error response: {e}")
-        return b""  # Return an empty response if query parsing fails
-
-    flags = 0x8180 | rcode  # Standard query response with the provided error code
-    qd_count = 1  # One question
-    an_count = 0  # No answer records
-    ns_count = 0  # No authority records
-    ar_count = 0  # No additional records
-    header = build_dns_header(transaction_id, flags, qd_count, an_count, ns_count, ar_count)
-    question = query[12:]  # Include the original question section
-    return header + question
-
-def extract_referred_ip(response):
-    """
-    Extracts the referred IP address from a DNS response (Additional section).
-    """
-    # Locate the additional section (last part of the response)
-    try:
-        # Find the start of the additional section (example assumes one Authority and one Additional record)
-        # Skip the header (12 bytes) + Question (domain name + 4 bytes for QTYPE/QCLASS) + Authority section
-        question_end = response.find(b'\x00\x01\x00\x01') + 4  # End of Question
-        additional_section = response[question_end:]
-
-        # Locate the RDATA for the additional record
-        rdata_offset = additional_section.rfind(b'\x00\x04')  # Look for A record with RDLENGTH of 4 bytes
-        if rdata_offset == -1:
-            raise ValueError("RDATA for A record not found in the additional section")
-
-        # Extract the 4-byte IP address
-        ip_bytes = additional_section[rdata_offset + 2: rdata_offset + 6]  # Skip the RDLENGTH
-        if len(ip_bytes) != 4:
-            raise ValueError(f"Invalid IP bytes length: {len(ip_bytes)} (expected 4)")
-
-        return bytes_to_ip(ip_bytes)
-    except Exception as e:
-        raise ValueError(f"Failed to extract referred IP: {e}")
-
-def bytes_to_ip(ip_bytes):
-    """
-    Converts 4 bytes into a dotted-quad IPv4 address (e.g., "192.168.1.1").
-    """
-    return socket.inet_ntoa(ip_bytes)
 
 
 
@@ -314,108 +149,6 @@ def extract_ip_from_answer(answer_section):
     except Exception as e:
         print(f"Error extracting IP address: {str(e)}")
         return None
-
-
-def parse_dns_final(response):
-    """
-    Parse a DNS response and construct a valid DNS reply to be sent to the client.
-    
-    This function ensures the output conforms to DNS protocol standards by including
-    the header, question, and answer sections while ignoring any extraneous or malformed data.
-    
-    Parameters:
-    - response: Raw DNS response bytes.
-    
-    Returns:
-    - A byte string representing a valid DNS response.
-    """
-    try:
-        if len(response) < 12:
-            raise ValueError("Response too short for DNS header")
-
-        # Parse header
-        transaction_id, flags, qdcount, ancount, nscount, arcount = struct.unpack("!HHHHHH", response[:12])
-        logging.info(f"Header: ID={transaction_id}, Flags=0x{flags:X}, QDCOUNT={qdcount}, ANCOUNT={ancount}, NSCOUNT={nscount}, ARCOUNT={arcount}")
-        
-        current_pos = 12
-        questions = []
-        answers = []
-
-        # Parse question section
-        for _ in range(qdcount):
-            qname, qtype, qclass, new_pos = parse_question_section(response, current_pos)
-            if qname is not None:
-                questions.append({
-                    "name": qname,
-                    "type": qtype,
-                    "class": qclass
-                })
-            current_pos = new_pos
-
-        # Parse answer section
-        for _ in range(ancount):
-            answer, new_pos = parse_answer_section(response, current_pos, questions[0]["name"])
-            if answer:
-                answers.append(answer)
-            current_pos = new_pos
-
-        # Reconstruct DNS response
-        reconstructed_response = bytearray(response[:12])  # Start with the header
-        for question in questions:
-            reconstructed_response.extend(construct_question_section(question))
-        for answer in answers:
-            reconstructed_response.extend(construct_answer_section(answer))
-
-        return bytes(reconstructed_response)
-
-    except Exception as e:
-        logging.error(f"Error parsing DNS response: {e}", exc_info=True)
-        return b""
-
-
-def construct_question_section(question):
-    """
-    Construct the question section of a DNS response.
-    
-    Parameters:
-    - question: A dictionary containing `name`, `type`, and `class`.
-    
-    Returns:
-    - Bytes representing the question section.
-    """
-    qname = construct_dns_name(question["name"])
-    qtype_qclass = struct.pack("!HH", question["type"], question["class"])
-    return qname + qtype_qclass
-
-
-def construct_answer_section(answer):
-    """
-    Construct the answer section of a DNS response.
-    
-    Parameters:
-    - answer: A dictionary containing the answer record details.
-    
-    Returns:
-    - Bytes representing the answer section.
-    """
-    name = construct_dns_name(answer["name"]) if isinstance(answer["name"], str) else answer["name"]
-    rtype_class_ttl_rdlength = struct.pack("!HHIH", answer["type"], answer["class"], answer["ttl"], len(answer["rdata"]))
-    return name + rtype_class_ttl_rdlength + answer["rdata"]
-
-
-def construct_dns_name(domain_name):
-    """
-    Convert a domain name into DNS name format.
-    
-    Parameters:
-    - domain_name: A string representing the domain name.
-    
-    Returns:
-    - Bytes representing the DNS name in the correct format.
-    """
-    labels = domain_name.split(".")
-    return b"".join(len(label).to_bytes(1, "big") + label.encode() for label in labels) + b"\x00"
-
 
 
 def parse_dns_response(response):
@@ -596,8 +329,6 @@ def parse_question_section(response, offset):
 
 
 
-import struct
-import logging
 
 def construct_dns_response(response):
     """
@@ -674,6 +405,8 @@ def construct_dns_response(response):
     except Exception as e:
         logging.error(f"Error constructing DNS response: {e}", exc_info=True)
         return b""
+
+
 
 
 

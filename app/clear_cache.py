@@ -18,7 +18,7 @@ def clear_redis_cache(server_name):
         print(f"Error clearing cache for {server_name}: {e}")
 
 # List of Redis servers
-servers = ["redis-server-1", "redis-server-2"]
+servers = ["redis-server-1", "redis-server-2", "redis-server-3"]
 
 # Clear cache for each server
 for server in servers:

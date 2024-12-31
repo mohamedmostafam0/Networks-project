@@ -4,7 +4,7 @@ import pickle
 from typing import Optional
 import hashlib
 import logging
-from utils import parse_dns_response, parse_question_section, parse_dns_query
+from utils import parse_question_section, parse_dns_query
 
 
 class BaseCache:
@@ -57,7 +57,6 @@ class BaseCache:
 
             return None
 
-
     def store(self, response: bytes):
         logging.info(f"storing response in cache")
         ttl = 3600
@@ -77,9 +76,6 @@ class BaseCache:
             logging.info(f"Stored in cache: Key={key_string}, TTL={ttl}, Entry={cache_entry}")
         except Exception as e:
             logging.error(f"Error storing response in cache: {e}")
-
-
-
 
     def _serialize_cache_key(self, cache_key: tuple) -> str:
         """
