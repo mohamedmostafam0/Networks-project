@@ -22,3 +22,4 @@ networking.net IN MR mailrename@networking.net
 networking.net IN NULL
 networking.net IN HINFO "Intel" "i7"
 networking.net IN HINFO "Ubuntu" "Linux"
+networking.net IN MAILB mailbackup@networking.net

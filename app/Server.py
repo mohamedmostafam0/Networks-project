@@ -35,12 +35,6 @@ class Server:
     def __init__(self):
         self.records = {}
 
-    def handle_query(self, query):
-        """
-        Handles a DNS query.
-        Must be implemented by subclasses.
-        """
-        raise NotImplementedError("Subclasses must implement handle_query")
 
     def build_response(self, query, record_type):
         """
@@ -54,11 +48,13 @@ class Server:
                 return self.build_error_response(query, rcode=3)  # NXDOMAIN
 
             header = self.build_dns_header(transaction_id, flags=0x8180, qd_count=1, an_count=len(self.records[domain_name][record_type]))
+
             question = self.build_question_section(domain_name, qtype, qclass)
+            
             answer = self.build_answer_section(domain_name, record_type, qtype, qclass)
 
             response = header + question + answer
-            logging.info(f"Response built: {response}")
+            # logging.info(f"Response built: {response}")
             return response
 
         except Exception as e:
@@ -99,18 +95,18 @@ class Server:
 
     def build_error_response(self, query, rcode):
         """
-        Constructs a DNS response with an error (e.g., NXDOMAIN).
+        Constructs a DNS response with an error (e.g., NXDOMAIN or NOTIMP).
         """
         try:
-            transaction_id, _, _, _ = parse_dns_query(query)
-        except ValueError as e:
-            logging.error(f"Failed to parse query for error response: {e}")
-            return b""  # Return an empty response if query parsing fails
+            transaction_id, domain_name, qtype, qclass = parse_dns_query(query)
+            flags = 0x8180 | rcode  # Set QR (response) flag and RCODE
+            header = self.build_dns_header(transaction_id, flags, qd_count=1, an_count=0, ns_count=0, ar_count=0)
+            question = self.build_question_section(domain_name, qtype, qclass)
+            return header + question
+        except Exception as e:
+            logging.error(f"Failed to build error response: {e}")
+            return b''  # Return an empty response on failure
 
-        flags = 0x8180 | rcode
-        header = self.build_dns_header(transaction_id, flags, qd_count=1, an_count=0)
-        question = query[12:]  # Include the original question section
-        return header + question
 
     def validate_query(self, query):
         """
@@ -120,16 +116,15 @@ class Server:
             raise ValueError("Invalid DNS query: Query too short")
 
         transaction_id, domain_name, qtype, qclass = parse_dns_query(query)
-
-        if qtype not in Server.QTYPE_MAPPING:
+        logging.debug(f"Validating query: {domain_name}, qtype: {qtype}, qclass: {qclass}")
+        if qtype not in self.QTYPE_MAPPING:
             # Handle unsupported query types
-            print("Unsupported query type")
-            return self.build_error_response(query, rcode=3)
+            raise ValueError(f"Unsupported query type: {qtype}")
 
         if qclass != 1:  # Only support IN class
             raise ValueError("Unsupported query class")
         return transaction_id, domain_name, qtype, qclass
-
+    
     def query_type_to_string(self, qtype):
         """
         Converts a numeric query type to its string representation.

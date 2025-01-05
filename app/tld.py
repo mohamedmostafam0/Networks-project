@@ -27,8 +27,9 @@ class TLDServer(Server):
             "techstartup.io": "192.168.2.16",
             "innovators.tech": "192.168.2.17",
         }
+        self.ttl = 3600
         self.cache = cache
-        self.ttl = 3600  # Default TTL for records
+
 
     def handle_tld_query(self, query):
             """
@@ -43,19 +44,18 @@ class TLDServer(Server):
                 print("Building error response")
                 return self.build_error_response(query, rcode=1)  # Format error (RCODE 1)
             
-            cached_response = self.cache.get(domain_name)
-            if cached_response:
-                logging.info(f"Cache hit for {domain_name}.")
-                return cached_response
+            # cached_response = self.cache.get(domain_name)
+            # if cached_response:
+            #     logging.info(f"Cache hit for {domain_name}.")
+            #     return cached_response
 
             # Find the authoritative server for the domain
             authoritative_server_address = self.find_authoritative_server(domain_name)
             if authoritative_server_address:
                 logging.info(
-                    f"Referring query for {domain_name} to authoritative server at {authoritative_server_address}"
-                )
+                    f"Referring query for {domain_name} to authoritative server at {authoritative_server_address}")
                 response = self.build_referral_response(query, domain_name, authoritative_server_address)
-                self.cache.store(domain_name, response)
+                # self.cache.store(domain_name, response)
                 return response
 
             # If no authoritative server is found, return an error response

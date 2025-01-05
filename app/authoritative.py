@@ -5,7 +5,6 @@ from utils import parse_dns_query
 import os
 import socket
 from Server import Server
-import threading
 import time
 
 logging.basicConfig(level=logging.DEBUG)
@@ -177,13 +176,13 @@ class AuthoritativeServer(Server):
             authority_rrs = 0
             additional_rrs = 0
             header = self.build_dns_header(transaction_id, flags, questions, answers, authority_rrs, additional_rrs)
-            logging.info(f"header is {header}")
+
             # Build DNS question section
             question = self.build_question_section(domain_name, qtype, qclass)
-            logging.info(f"question is {question}")
+
             # Build DNS answer section
             answer = self.build_answer_section(domain_name, record_type, qtype, qclass)
-            logging.info(f"answer is {answer}")
+
             # Combine all sections to form the response
             response = header + question + answer
             logging.debug(f"header is {header}, question is {question}, answer is {answer}")
@@ -269,11 +268,6 @@ class AuthoritativeServer(Server):
                 )
                 answer += struct.pack("!HHIH", querytype, qclass, 3600, len(rdata)) + rdata
 
-            elif record_type == "NULL":
-                # Null record
-                rdata = b''  # Null record has no data
-                answer += struct.pack("!HHIH", querytype, qclass, 3600, len(rdata)) + rdata
-
             elif record_type == "WKS":
                 try:
                     # Well-known services
@@ -290,8 +284,17 @@ class AuthoritativeServer(Server):
                 except Exception as e:
                     logging.error(f"Unexpected error in WKS record for domain {domain_name}: {e}")
 
-            elif record_type in ["MAILB", "AXFR"]:
-                # Placeholder for unsupported or less common record types
+            elif record_type in ["NULL", "AXFR", "MAILB", "MAILA"]:
+                rdata = b''
+                answer += struct.pack("!HHIH", querytype, qclass, 3600, len(rdata)) + rdata
+
+            elif record_type == "*":
+                # Wildcard queries (respond with all record types for the domain)
+                for rtype, records in self.records[domain_name].items():
+                    for r in records:
+                        wildcard_answer = self.build_answer_section(domain_name, rtype, qtype, qclass)
+                        answer += wildcard_answer
+
                 answer += b''
         return answer
 
@@ -353,7 +356,6 @@ class AuthoritativeServer(Server):
                         for rdata in rdata_list:
                             try:
                                 if rtype == "SOA":
-                                    # Handle SOA: primary_ns, admin_email, serial, refresh, retry, expire, min_ttl
                                     primary_ns, admin_email, serial, refresh, retry, expire, min_ttl = rdata.split(' ')
                                     file.write(f"{domain} IN SOA {primary_ns} {admin_email} (\n")
                                     file.write(f"    {serial} ; Serial\n")
@@ -364,41 +366,45 @@ class AuthoritativeServer(Server):
                                     file.write(")\n")
 
                                 elif rtype == "MX":
-                                    # Handle MX: priority and mail server
                                     priority, mail_server = rdata.split(' ', 1)
                                     file.write(f"{domain} IN MX {priority} {mail_server}\n")
 
                                 elif rtype in ["A", "NS", "PTR", "CNAME"]:
-                                    # Handle basic types
                                     file.write(f"{domain} IN {rtype} {rdata}\n")
 
                                 elif rtype == "TXT":
-                                    # Handle TXT: Escape quotes
                                     escaped_rdata = rdata.replace('"', '\\"')
                                     file.write(f"{domain} IN TXT \"{escaped_rdata}\"\n")
 
                                 elif rtype == "HINFO":
-                                    # Handle HINFO: CPU and OS
                                     cpu, os_info = rdata.split(' ', 1)
                                     file.write(f"{domain} IN HINFO \"{cpu}\" \"{os_info}\"\n")
 
                                 elif rtype == "MINFO":
-                                    # Handle MINFO: RMAILBX and EMAILBX
                                     rmailbx, emailbx = rdata.split(' ', 1)
                                     file.write(f"{domain} IN MINFO {rmailbx} {emailbx}\n")
 
                                 elif rtype in ["MB", "MG", "MR"]:
-                                    # Handle mailbox-related records
                                     file.write(f"{domain} IN {rtype} {rdata}\n")
 
                                 elif rtype == "WKS":
-                                    # Handle WKS: Address, Protocol, and Bitmap
                                     address, protocol, bitmap = rdata.split(' ', 2)
                                     file.write(f"{domain} IN WKS {address} {protocol} {bitmap}\n")
 
                                 elif rtype == "NULL":
-                                    # Handle NULL: No data
                                     file.write(f"{domain} IN NULL\n")
+
+                                elif rtype == "AXFR":
+                                    file.write(f"{domain} IN AXFR\n")
+
+                                elif rtype == "MAILB":
+                                    file.write(f"{domain} IN MAILB {rdata}\n")
+
+                                elif rtype == "MAILA":
+                                    file.write(f"{domain} IN MAILA {rdata}\n")
+
+                                elif rtype == "*":
+                                    file.write(f"{domain} IN * {rdata}\n")
 
                                 else:
                                     logging.warning(f"Unsupported record type: {rtype} for domain {domain}. Skipping.")
@@ -413,7 +419,7 @@ class AuthoritativeServer(Server):
 
                 
 
-    def periodic_save(self, authoritative_server, interval=3600):
+    def periodic_save(self, authoritative_server, interval=5):
         while True:
             time.sleep(interval)  # Save every hour
             authoritative_server.save_master_files()

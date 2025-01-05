@@ -17,17 +17,18 @@ from utils import (
 logging.basicConfig(level=logging.DEBUG)
 
 class Resolver: 
-    def resolve_query(self, query, tld_cache, authoritative_cache, resolver_cache, root_server: RootServer, tld_server: TLDServer, authoritative_server: AuthoritativeServer, recursive, is_tcp=False):
+    def resolve_query(self, query, server, tld_cache, authoritative_cache, resolver_cache, root_server: RootServer, tld_server: TLDServer, authoritative_server: AuthoritativeServer, recursive, is_tcp=False):
         """
         Resolves a DNS query by checking the cache and querying the Root, TLD, and Authoritative servers in sequence.
         The recursive flag indicates whether to resolve the query recursively.
         """
-        # # Validate the query format
-        # try:
-        #     transaction_id, domain_name, qtype, qclass = Server.validate_query(query)
-        # except ValueError as e:
-        #     logging.error(f"Invalid query: {e}")
-        #     return self.build_error_response(query, rcode=1)  # Format error (RCODE 1)
+        # Validate the query format
+        try:
+            transaction_id, domain_name, qtype, qclass = server.validate_query(query)
+            logging.debug(f"Received query for domain: {domain_name}, qtype: {qtype}, qclass: {qclass}")
+        except ValueError as e:
+            logging.error(f"Query validation error: {e}")
+            return server.build_error_response(query, rcode=4)  # NOTIMP (Not Implemented)
 
         transaction_id, domain_name, qtype, qclass = parse_dns_query(query)
         cache_key = (domain_name, qtype, qclass)
@@ -40,7 +41,7 @@ class Resolver:
             return cached_response
             # return human_readable
 
-        logging.info(f"Cache miss for domain: {domain_name}. Querying root server.")
+        logging.info(f"Resolver cache miss for domain: {domain_name}. Querying root server.")
 
         if recursive:
             # Query Root Server and follow the chain for recursive resolution
@@ -51,14 +52,17 @@ class Resolver:
                 logging.error(f"Root server could not resolve domain: {domain_name}")
                 return self.build_error_response(query, rcode=3)  # NXDOMAIN
 
-            cached_response = tld_cache.get(cache_key, transaction_id)
-            logging.debug(f"Cached response is: {cached_response}")
-            if cached_response:
+            # logging.debug(f"cache key is {cache_key}, transaction id is {transaction_id}")
+            tld_cached_response = tld_cache.get(cache_key, transaction_id)
+            # logging.debug(f"TLD cached response is: {tld_cached_response}")
+            if tld_cached_response:
                 logging.info(f"Top level domain cache hit for domain: {domain_name}")
-                tld_response = cached_response
+                tld_response = tld_cached_response
             else:
+
                 logging.info(f"Cache miss for top-level domain: {domain_name}")
                 tld_server_ip = tld_server.extract_referred_ip(root_response)
+                # logging.debug(f"Referred TLD server IP: {tld_server_ip}")
                 tld_response = tld_server.handle_tld_query(root_response)
 
                 logging.debug(f"TLD server IP is {tld_server_ip} and TLD response is {tld_response}")
@@ -67,10 +71,10 @@ class Resolver:
                     return self.build_error_response(query, rcode=3)  # NXDOMAIN
 
                 # Store the response in the TLD cache
-                tld_cache.store(cache_key, tld_response)
-                logging.info(f"Returning referral to TLD server at {tld_server_ip}")
+                tld_cache.store(tld_response)
+                # logging.info(f"Returning referral to TLD server at {tld_server_ip}")
+
             # Query Authoritative Server
-            cache_key = (domain_name, qtype, qclass)
             # Check the cache for the response
             cached_response = authoritative_cache.get(cache_key, transaction_id)
             if cached_response:

@@ -23,3 +23,4 @@ university.edu IN NULL
 university.edu IN WKS 93.184.216.38 6 01020304
 university.edu IN HINFO "Intel" "i7"
 university.edu IN HINFO "Ubuntu" "Linux"
+university.edu IN MAILB mailbackup@university.edu

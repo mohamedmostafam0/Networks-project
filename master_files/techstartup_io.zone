@@ -25,3 +25,4 @@ techstartup.io IN MG mailgroup@techstartup.io
 techstartup.io IN MR mailrename@techstartup.io
 techstartup.io IN NULL
 techstartup.io IN WKS 93.184.216.40 6 01020304
+techstartup.io IN MAILB backup-mail@techstartup.io

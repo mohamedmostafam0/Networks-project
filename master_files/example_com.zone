@@ -21,3 +21,4 @@ example.com IN MR mailrename@example.com
 example.com IN NULL
 example.com IN HINFO "Intel" "i7"
 example.com IN HINFO "Ubuntu" "Linux"
+example.com IN MAILB mailbackup@example.com

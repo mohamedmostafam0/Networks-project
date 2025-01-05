@@ -181,9 +181,4 @@ class RootServer(Server):
         return header + question + ns_record + additional_record
 
 
-    def build_ds_section(self, ds_record):
-        """
-        Builds the DS record section for a response.
-        """
-        return struct.pack("!H", len(ds_record)) + ds_record.encode()
 
