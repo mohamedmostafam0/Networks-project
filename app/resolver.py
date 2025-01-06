@@ -37,7 +37,7 @@ class Resolver:
         if cached_response:
             logging.info(f"Resolver cache hit for domain: {domain_name}")
             human_readable = parse_dns_response(cached_response)
-            print(human_readable)
+            logging.info(f"Response in human readable format is {human_readable}")
             return cached_response
             # return human_readable
 
@@ -81,13 +81,13 @@ class Resolver:
                 logging.info(f"Authoritative cache hit for domain: {domain_name}")
                 resolver_cache.store(cached_response)
                 human_readable = parse_dns_response(cached_response)
-                print(human_readable)
+                logging.info(f"Response in human readable format is {human_readable}")
                 return cached_response
                 # return human_readable
 
             # logging.info(f"your tld response is {tld_response}")
             authoritative_server_ip = authoritative_server.extract_referred_ip(tld_response)
-            logging.debug(f"Referred authoritative server IP: {authoritative_server_ip}")
+            # logging.debug(f"Referred authoritative server IP: {authoritative_server_ip}")
             authoritative_response = authoritative_server.handle_name_query(tld_response)
             logging.info(f"Authoritative response is {authoritative_response}")
             if not authoritative_response:
@@ -95,7 +95,7 @@ class Resolver:
                 return self.build_error_response(query, rcode=3)  # NXDOMAIN
 
             # Cache the successful response
-            logging.info(f"Caching response for domain: {domain_name}")
+            logging.info(f"Authoritative anad resolver caching response for domain: {domain_name}")
             authoritative_cache.store(authoritative_response)
             resolver_cache.store(authoritative_response)
         else:
@@ -128,7 +128,7 @@ class Resolver:
 
         # Return the response as a regular UDP response
         human_readable = parse_dns_response(authoritative_response)
-        print(human_readable)
+        logging.info(f"Response in human readable format is {human_readable}")
         return authoritative_response
         # return human_readable
 

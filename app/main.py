@@ -15,8 +15,19 @@ from utils import parse_dns_query
 
 
 # Setup logging
-logging.basicConfig(level=logging.DEBUG)
-# DNS server configuration
+logging.basicConfig(
+    level=logging.DEBUG,
+    filename='C:/Users/moham/Documents/uni/semesters/fall 2025/networks/Networks-project/app/app.log',       # Logs will be saved to "app.log"
+    filemode='w',             # Overwrite the file each time the script runs
+    format='%(asctime)s - %(levelname)s - %(message)s'  # Custom log format
+)
+
+logging.debug("Debugging details")
+logging.info("Info message")
+logging.warning("Warning message")
+logging.error("Error message")
+logging.critical("Critical error")# DNS server configuration
+
 DNS_SERVER_IP = "0.0.0.0"  # Allow access from any device on the local network
 DNS_SERVER_UDP_PORT = 1053
 DNS_SERVER_TCP_PORT = 1053

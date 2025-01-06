@@ -185,7 +185,7 @@ class AuthoritativeServer(Server):
 
             # Combine all sections to form the response
             response = header + question + answer
-            logging.debug(f"header is {header}, question is {question}, answer is {answer}")
+            # logging.debug(f"header is {header}, question is {question}, answer is {answer}")
             return response
 
         except Exception as e:
@@ -419,7 +419,7 @@ class AuthoritativeServer(Server):
 
                 
 
-    def periodic_save(self, authoritative_server, interval=5):
+    def periodic_save(self, authoritative_server, interval=3600):
         while True:
             time.sleep(interval)  # Save every hour
             authoritative_server.save_master_files()

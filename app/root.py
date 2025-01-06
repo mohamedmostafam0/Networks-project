@@ -9,6 +9,7 @@ from utils import (
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
+logging.getLogger("filelock").setLevel(logging.WARNING)
 
 class RootServer(Server):
     def __init__(self):
@@ -50,7 +51,6 @@ class RootServer(Server):
             "sa": "192.168.1.43",
             "cl": "192.168.1.44",
             "ar": "192.168.1.45",
-            "eg": "192.168.1.46",
             "tr": "192.168.1.47",
             "vn": "192.168.1.48",
             "my": "192.168.1.49",

@@ -1,4 +1,3 @@
-import struct
 import logging
 from utils import (
     parse_dns_query,
@@ -52,8 +51,8 @@ class TLDServer(Server):
             # Find the authoritative server for the domain
             authoritative_server_address = self.find_authoritative_server(domain_name)
             if authoritative_server_address:
-                logging.info(
-                    f"Referring query for {domain_name} to authoritative server at {authoritative_server_address}")
+                # logging.info(
+                #     f"Referring query for {domain_name} to authoritative server at {authoritative_server_address}")
                 response = self.build_referral_response(query, domain_name, authoritative_server_address)
                 # self.cache.store(domain_name, response)
                 return response

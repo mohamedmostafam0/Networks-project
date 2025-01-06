@@ -13,7 +13,7 @@ class BaseCache:
         Initializes the Redis cache connection.
         """
         self.client = redis.StrictRedis(host=redis_host, port=redis_port, db=db, decode_responses=False)
-        print("Cache connection initialized")
+        # print("Cache connection initialized")
 
     def get(self, cache_key: tuple, transaction_id: int) -> Optional[bytes]:
             """
@@ -36,16 +36,14 @@ class BaseCache:
                     try:
                         # Parse the cached response to extract details and ensure integrity
                         cached_transaction_id, domain_name, qtype, qclass = parse_dns_query(cached_response['response'])
-                        logging.info(f"Cached transaction ID: {cached_transaction_id}, Domain: {domain_name}, Qtype: {qtype}, Qclass: {qclass}")
+                        # logging.info(f"Cached transaction ID: {cached_transaction_id}, Domain: {domain_name}, Qtype: {qtype}, Qclass: {qclass}")
 
-                        if cached_transaction_id != transaction_id:
-                            logging.error(f"Transaction ID mismatch for domain: {domain_name}")
 
                         # Modify the cached response to include the new transaction ID
                         response = bytearray(cached_response['response'])  # Convert to mutable bytearray
                         response[0:2] = transaction_id.to_bytes(2, byteorder='big')  # Update transaction ID
 
-                        logging.info(f"Updated transaction ID in response for domain: {domain_name}")
+                        # logging.info(f"Updated transaction ID in response for domain: {domain_name}")
                         return bytes(response)  # Convert back to bytes and return
                     except ValueError as e:
                         logging.error(f"Error parsing cached DNS response: {e}")
@@ -58,7 +56,7 @@ class BaseCache:
             return None
 
     def store(self, response: bytes):
-        logging.info(f"storing response in cache")
+        # logging.info(f"storing response in cache")
         ttl = 3600
         try:
             qname, qtype, qclass, _ = parse_question_section(response, 12)
@@ -73,7 +71,7 @@ class BaseCache:
             }
 
             self.client.setex(key_string, ttl, pickle.dumps(cache_entry))
-            logging.info(f"Stored in cache: Key={key_string}, TTL={ttl}, Entry={cache_entry}")
+#            logging.info(f"Stored in cache: Key={key_string}, TTL={ttl}, Entry={cache_entry}")
         except Exception as e:
             logging.error(f"Error storing response in cache: {e}")
 
